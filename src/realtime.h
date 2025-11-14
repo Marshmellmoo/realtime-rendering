@@ -1,6 +1,10 @@
 #pragma once
 
 // Defined before including GLEW to suppress deprecation messages on macOS
+#include "camera/camera.h"
+#include "utils/sceneparser.h"
+#include "utils/shaderloader.h"
+
 #ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION
 #endif
@@ -13,30 +17,62 @@
 #include <QTime>
 #include <QTimer>
 
-class Realtime : public QOpenGLWidget
-{
-public:
+struct ShapeGeometry {
+
+    GLuint vbo;
+    GLuint vao;
+    int verticies;
+
+};
+
+
+class Realtime : public QOpenGLWidget {
+
+public:  
     Realtime(QWidget *parent = nullptr);
     void finish();                                      // Called on program exit
     void sceneChanged();
     void settingsChanged();
     void saveViewportImage(std::string filePath);
 
-public slots:
+public slots: 
     void tick(QTimerEvent* event);                      // Called once per tick of m_timer
 
-protected:
+protected:  
     void initializeGL() override;                       // Called once at the start of the program
     void paintGL() override;                            // Called whenever the OpenGL context changes or by an update() request
     void resizeGL(int width, int height) override;      // Called when window size changes
 
-private:
+private: 
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void timerEvent(QTimerEvent *event) override;
+
+    // === Scene Data ===
+    RenderData m_renderData;
+    SceneGlobalData m_global;
+
+    // === Shader ===
+    GLuint m_phong;
+
+    // === Camera ===
+    Camera m_camera;
+    glm::mat4 m_view;
+    glm::mat4 m_projection;
+
+    // === Shape Information ===
+    bool geometryInit = false;
+    ShapeGeometry m_sphereGeometry;
+    ShapeGeometry m_cubeGeometry;
+    ShapeGeometry m_cylinderGeometry;
+    ShapeGeometry m_coneGeometry;
+
+    void initializeShapeGeometry();
+    void passLightsToShader(GLuint shader);
+    void drawShape(const RenderShapeData& shape);
 
     // Tick Related Variables
     int m_timer;                                        // Stores timer which attempts to run ~60 times per second
