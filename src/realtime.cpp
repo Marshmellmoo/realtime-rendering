@@ -64,7 +64,6 @@ void Realtime::initializeGL() {
     glEnable(GL_CULL_FACE);
     // Tells OpenGL how big the screen is
     glViewport(0, 0, size().width() * m_devicePixelRatio, size().height() * m_devicePixelRatio);
-    glClearColor(1.0, 0.0, 0.0, 1.0);
 
     // Students: anything requiring OpenGL calls when the program starts should be done here
 
@@ -78,56 +77,6 @@ void Realtime::initializeGL() {
 
 }
 
-// void insert(std::vector<float> &data, glm::vec3 v) {
-//     data.push_back(v.x);
-//     data.push_back(v.y);
-//     data.push_back(v.z);
-// }
-
-// void setVertexData() {
-
-//     glm::vec3 vecA = glm::vec3(-0.5f, 0.5f, 0.0f);
-//     glm::vec3 vecB = glm::vec3(-0.5f, -0.5f, 0.0f);
-//     glm::vec3 vecC = glm::vec3(0.5f, -0.5f, 0.0f);
-//     glm::vec3 norm = glm::vec3(0, 0, 1);
-
-//     std::vector<float> data;
-//     GLuint vbo;
-//     GLuint vao;
-
-//     insert(data, vecA);
-//     insert(data, norm);
-//     insert(data, vecB);
-//     insert(data, norm);
-//     insert(data, vecC);
-//     insert(data, norm);
-
-//     glGenBuffers(1, &vbo);
-//     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-//     glBufferData(GL_ARRAY_BUFFER,
-//                  data.size() * sizeof(GLfloat),
-//                  data.data(),
-//                  GL_STATIC_DRAW);
-
-//     glGenVertexArrays(1, &vao);
-//     glBindVertexArray(vao);
-
-//     // Positions
-//     glEnableVertexAttribArray(0);
-//     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-//                           6 * sizeof(float),
-//                           (void*)0);
-
-//     // Normals
-//     glEnableVertexAttribArray(1);
-//     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-//                           6 * sizeof(float),
-//                           (void*)(3 * sizeof(float)));
-
-//     glBindVertexArray(0);
-//     glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-// }
 
 void Realtime::initializeShapeGeometry() {
 
@@ -150,14 +99,14 @@ void Realtime::initializeShapeGeometry() {
     // Positions
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
+                          6 * sizeof(GLfloat),
                           (void*)0);
 
     // Normals
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
-                          (void*)(3 * sizeof(float)));
+                          6 * sizeof(GLfloat),
+                          (void*)(3 * sizeof(GLfloat)));
 
     m_sphereGeometry.verticies = sphere.size() / 6;
 
@@ -181,14 +130,14 @@ void Realtime::initializeShapeGeometry() {
     // Positions
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
+                          6 * sizeof(GLfloat),
                           (void*)0);
 
     // Normals
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
-                          (void*)(3 * sizeof(float)));
+                          6 * sizeof(GLfloat),
+                          (void*)(3 * sizeof(GLfloat)));
 
     // Vertex Count
     m_cubeGeometry.verticies = cube.size() / 6;
@@ -213,14 +162,14 @@ void Realtime::initializeShapeGeometry() {
     // Positions
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
+                          6 * sizeof(GLfloat),
                           (void*)0);
 
     // Normals
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                          6 * sizeof(float),
-                          (void*)(3 * sizeof(float)));
+                          6 * sizeof(GLfloat),
+                          (void*)(3 * sizeof(GLfloat)));
 
     // Vertex Count
     m_cylinderGeometry.verticies = cylinder.size() / 6;
@@ -282,14 +231,13 @@ void Realtime::paintGL() {
     glUniform1f(glGetUniformLocation(m_phong, "ks"),
                 m_global.ks);
 
+    m_view = m_camera.getViewMatrix();
 
     passLightsToShader(m_phong);
 
     for (const auto& shape : m_renderData.shapes) {
         drawShape(shape);
     }
-
-    // setVertexData();
 
     glUseProgram(0);
 
@@ -428,8 +376,6 @@ void Realtime::drawShape(const RenderShapeData& shape) {
 
     }
 
-    std::cout << std::to_string(verticies) << std::endl;
-
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, verticies);
     glBindVertexArray(0);
@@ -462,17 +408,9 @@ void Realtime::sceneChanged() {
     bool success = SceneParser::parse(sceneFilepath, m_renderData);
 
     if (!success) {
-        std::cerr << "Failed to parse scene file" << std::endl;
+        std::cerr << "Failed to parse scene file." << std::endl;
         return;
     }
-
-    // Debug output
-    std::cout << "Scene loaded successfully!" << std::endl;
-    std::cout << "  Shapes: " << m_renderData.shapes.size() << std::endl;
-    std::cout << "  Lights: " << m_renderData.lights.size() << std::endl;
-    std::cout << "  Camera pos: (" << m_renderData.cameraData.pos.x << ", "
-              << m_renderData.cameraData.pos.y << ", "
-              << m_renderData.cameraData.pos.z << ")" << std::endl;
 
     m_global = m_renderData.globalData;
 
@@ -534,6 +472,7 @@ void Realtime::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void Realtime::mouseMoveEvent(QMouseEvent *event) {
+
     if (m_mouseDown) {
         int posX = event->position().x();
         int posY = event->position().y();
@@ -541,10 +480,14 @@ void Realtime::mouseMoveEvent(QMouseEvent *event) {
         int deltaY = posY - m_prev_mouse_pos.y;
         m_prev_mouse_pos = glm::vec2(posX, posY);
 
-        // Use deltaX and deltaY here to rotate
+        // Rotation sensitivity
+        float sensitivity = 0.002f;
+        m_camera.rotate(deltaX * sensitivity, deltaY * sensitivity);
+        m_view = m_camera.getViewMatrix();
 
-        update(); // asks for a PaintGL() call to occur
+        update();
     }
+
 }
 
 void Realtime::timerEvent(QTimerEvent *event) {
@@ -552,9 +495,30 @@ void Realtime::timerEvent(QTimerEvent *event) {
     float deltaTime = elapsedms * 0.001f;
     m_elapsedTimer.restart();
 
-    // Use deltaTime and m_keyMap here to move around
+    float speed;
+    glm::vec3 movement(0.0f);
 
-    update(); // asks for a PaintGL() call to occur
+    speed = 5.0f * deltaTime;
+
+    glm::vec3 look = glm::normalize(glm::vec3(m_camera.getInverseViewMatrix()[2]));
+    glm::vec3 right = glm::normalize(glm::vec3(m_camera.getInverseViewMatrix()[0]));
+    glm::vec3 up = glm::vec3(0, 1, 0);
+
+    if (m_keyMap[Qt::Key_W]) movement -= look * speed;
+    if (m_keyMap[Qt::Key_S]) movement += look * speed;
+    if (m_keyMap[Qt::Key_A]) movement -= right * speed;
+    if (m_keyMap[Qt::Key_D]) movement += right * speed;
+    if (m_keyMap[Qt::Key_Space]) movement += up * speed;
+    if (m_keyMap[Qt::Key_Control]) movement -= up * speed;
+
+    if (glm::length(movement) > 0.0f) {
+
+        m_camera.translate(movement);
+        // m_view = m_camera.getViewMatrix();
+        update();
+
+    }
+
 }
 
 // DO NOT EDIT
@@ -562,8 +526,10 @@ void Realtime::saveViewportImage(std::string filePath) {
     // Make sure we have the right context and everything has been drawn
     makeCurrent();
 
-    int fixedWidth = 1024;
-    int fixedHeight = 768;
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    int fixedWidth = viewport[2];
+    int fixedHeight = viewport[3];
 
     // Create Frame Buffer
     GLuint fbo;

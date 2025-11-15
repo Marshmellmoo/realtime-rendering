@@ -67,6 +67,7 @@ bool SceneParser::parse(std::string filepath, RenderData &renderData) {
 
     auto rootNode = fileReader.getRootNode();
     renderData.shapes.clear();
+    renderData.lights.clear();
 
     nodeTraversal(rootNode, renderData, glm::mat4(1.0f));
 

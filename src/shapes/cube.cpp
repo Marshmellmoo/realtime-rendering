@@ -65,7 +65,7 @@ static void makeCube(std::vector<float>& data, int param) {
 
     glm::vec3 corner[8] = {
 
-    {-0.5f,  0.5f,  0.5f},  // 0. front-top-left !
+        {-0.5f,  0.5f,  0.5f},  // 0. front-top-left !
         { 0.5f,  0.5f,  0.5f},  // 1. front-top-right !
         {-0.5f, -0.5f,  0.5f},  // 2. front-bottom-left !
         { 0.5f, -0.5f,  0.5f},  // 3. front-bottom-right !

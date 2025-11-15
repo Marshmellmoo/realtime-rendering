@@ -15,7 +15,7 @@ void main() {
     vec4 worldPosition = model * vec4(position, 1.0f);
     worldSpacePosition = worldPosition.xyz;
 
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
+    mat3 normalMatrix = transpose(inverse(mat3(model))); // compute in c++
     worldSpaceNormal = normalMatrix * normal;
 
     gl_Position = proj * view * worldPosition;

@@ -78,8 +78,8 @@ static void makeSphere(std::vector<float>& data, int param1, int param2) {
 std::vector<float> Sphere::generateSphereData(int param1, int param2) {
 
     std::vector<float> data;
-    param1 = glm::max(1, param1);
-    param2 = glm::max(1, param2);
+    param1 = glm::max(2, param1);
+    param2 = glm::max(2, param2);
 
     data.reserve(6 * param1 * param2 * 2 * 6 * 6);
     makeSphere(data, param1, param2);

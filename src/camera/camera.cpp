@@ -67,21 +67,21 @@ Camera::Camera() :
 
 glm::mat4 Camera::getViewMatrix() const {
 
-    /*if (m_viewGarbage) */updateViewMatrix();
+    if (m_viewGarbage) updateViewMatrix();
     return m_viewMatrix;
 
 }
 
 glm::mat4 Camera::getInverseViewMatrix() const {
 
-    /*if (m_viewGarbage) */updateViewMatrix();
+    if (m_viewGarbage) updateViewMatrix();
     return m_invViewMatrix;
 
 }
 
 glm::mat4 Camera::getProjectionMatrix() const {
 
-    /*if (m_projGarbage) */updateProjectionMatrix();
+    if (m_projGarbage) updateProjectionMatrix();
     return m_projMatrix;
 
 }
@@ -118,28 +118,34 @@ void Camera::updateProjectionMatrix() const {
     float scale_y = 1 / (m_farPlane * glm::tan(m_heightAngle / 2.0f));
     float scale_z = 1 / m_farPlane;
 
+    glm::vec4 s_xyzA(scale_x, 0, 0, 0);
+    glm::vec4 s_xyzB(0, scale_y, 0, 0);
+    glm::vec4 s_xyzC(0, 0, scale_z, 0);
+    glm::vec4 s_xyzD(0, 0, 0, 1);
+
     glm::mat4 s_xyz(
-        scale_x, 0, 0, 0,
-        0, scale_y, 0, 0,
-        0, 0, scale_z, 0,
-        0, 0, 0, 1
-        );
+        s_xyzA, s_xyzB, s_xyzC, s_xyzD
+    );
 
     float c = -m_nearPlane / m_farPlane;
 
+    glm::vec4 m_ppA(1, 0, 0, 0);
+    glm::vec4 m_ppB(0, 1, 0, 0);
+    glm::vec4 m_ppC(0, 0, 1 / (1 + c), -1);
+    glm::vec4 m_ppD(0, 0, -c / (1 + c), 0);
+
     glm::mat4 m_pp(
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1 / (1 + c), -c / (1 + c),
-        0, 0, -1, 0
-        );
+        m_ppA, m_ppB, m_ppC, m_ppD
+    );
+
+    glm::vec4 remapA(1, 0, 0, 0);
+    glm::vec4 remapB(0, 1, 0, 0);
+    glm::vec4 remapC(0, 0, -2, 0);
+    glm::vec4 remapD(0, 0, -1, 1);
 
     glm::mat4 remap(
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, -2, 0,
-        0, 0, 0, 1
-        );
+        remapA, remapB, remapC, remapD
+    );
 
     m_projMatrix = remap * m_pp * s_xyz;
     m_projGarbage = false;
@@ -153,8 +159,58 @@ void Camera::translate(const glm::vec3& delta) {
 
 }
 
-void Camera::rotate(float deltaX, float deltaY) {
+glm::mat3 rotationMatrix(float theta, const glm::vec3& axis) {
 
-    m_viewGarbage = true;
+    float cosine = cos(theta);
+    float sine = sin(theta);
+
+    float ux = axis.x;
+    float uy = axis.y;
+    float uz = axis.z;
+
+    glm::mat3 rot;
+
+    rot[0][0] = cosine + ux * ux * (1 - cosine);
+    rot[0][1] = ux * uy * (1 - cosine) - uz * sine;
+    rot[0][2] = ux * uz * (1 - cosine) + uy * sine;
+
+    rot[1][0] = ux * uy * (1 - cosine) + uz * sine;
+    rot[1][1] = cosine + uy * uy * (1 - cosine);
+    rot[1][2] = uy * uz * (1 - cosine) - ux * sine;
+
+    rot[2][0] = ux * uz * (1 - cosine) - uy * sine;
+    rot[2][1] = uy * uz * (1 - cosine) + ux * sine;
+    rot[2][2] = cosine + uz * uz * (1 - cosine);
+
+    return rot;
+
+}
+
+void Camera::rotate(float delta_x, float delta_y) {
+
+    glm::vec3 world(0.0f, 1.0f, 0.0f);
+    glm::mat3 rotation_x = rotationMatrix(-delta_x, world);
+    m_look = glm::normalize(rotation_x * m_look);
+
+    glm::vec3 right = glm::normalize(glm::cross(m_look, m_up));
+
+    glm::mat3 rotation_y = rotationMatrix(-delta_y, right);
+    glm::vec3 look_n = glm::normalize(rotation_y * m_look);
+
+    float dotWithWorldUp = glm::dot(look_n, world);
+    if (glm::abs(dotWithWorldUp) < 0.99f) {  // Allow up to ~82 degrees
+        m_look = look_n;
+    }
+
+    // Update the up vector to stay perpendicular to look
+    updateVectors();
+}
+
+void Camera::updateVectors() {
+
+    glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    glm::vec3 right = glm::normalize(glm::cross(m_look, worldUp));
+    m_up = glm::normalize(glm::cross(right, m_look));
+    updateViewMatrix();
 
 }

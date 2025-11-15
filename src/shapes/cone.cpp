@@ -9,15 +9,18 @@ static void insert(std::vector<float> &data, glm::vec3 v) {
 }
 
 static glm::vec3 calculateNormal(glm::vec3 &pt) {
-    float x = 2.f * pt.x;
-    float y = -(0.5f) * (2.f * pt.y - 1.f);
-    float z = 2.f * pt.z;
+
+    float x = pt.x;
+    float y = (0.5f - pt.y) / 4.0f;
+    float z =  pt.z;
 
     glm::vec3 normal(x, y, z);
     return glm::normalize(normal);
+
 }
 
 static glm::vec3 computeSlopeNormal(glm::vec3 &pt, glm::vec3 &edgeA, glm::vec3 &edgeB) {
+
     float radius = glm::length(glm::vec2(pt.x, pt.z));
 
     if (radius < 1e-5f) {
@@ -27,6 +30,7 @@ static glm::vec3 computeSlopeNormal(glm::vec3 &pt, glm::vec3 &edgeA, glm::vec3 &
     }
 
     return calculateNormal(pt);
+
 }
 
 static void makeSideTile(std::vector<float>& data,
@@ -60,7 +64,7 @@ static void makeSideTile(std::vector<float>& data,
 
 }
 
-static void makeBaseTile(std::vector<float> data,
+static void makeBaseTile(std::vector<float>& data,
                   glm::vec3 innerStart, glm::vec3 innerEnd,
                   glm::vec3 outerStart, glm::vec3 outerEnd) {
 
@@ -157,7 +161,7 @@ std::vector<float> Cone::generateConeData(int param1, int param2) {
 
     std::vector<float> data;
     param1 = glm::max(1, param1);
-    param2 = glm::max(1, param2);
+    param2 = glm::max(2, param2);
 
     data.reserve(6 * param1 * param2 * 2 * 6 * 6);
     makeCone(data, param1, param2);

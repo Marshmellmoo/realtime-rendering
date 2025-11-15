@@ -23,7 +23,7 @@ public:
     glm::mat4 getProjectionMatrix() const;
 
     void translate(const glm::vec3& delta);
-    void rotate(float deltaX, float deltaY);
+    void rotate(float delta_x, float delta_y);
 
 private:
 
@@ -47,5 +47,6 @@ private:
 
     void updateViewMatrix() const;
     void updateProjectionMatrix() const;
+    void updateVectors();
 
 };

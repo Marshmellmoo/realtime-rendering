@@ -76,9 +76,14 @@ Paste your output on top of this comment!
 -->
 
 ### Design Choices
+I chose to make a camera class, that would handle camera rotation, translation, and projection/view matrix calculations.
+Within realtime, I made a struct called ShapeGeometry, that owuld hold each shapes vao and vbo values, and update when 
+the settings changed.
 
 ### Collaboration/References
+I worked alone for this project, but used labs and code from raytracing as they applied to the project.
 
 ### Known Bugs
+There are no bugs that I know of.
 
 ### Extra Credit
