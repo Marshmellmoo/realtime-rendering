@@ -44,6 +44,7 @@ add_executable(${PROJECT_NAME}
     src/camera/camera.cpp src/camera/camera.h
     src/shapes/cone.cpp src/shapes/cone.h src/shapes/cylinder.cpp src/shapes/cylinder.h src/shapes/sphere.cpp src/shapes/sphere.h src/shapes/cube.cpp src/shapes/cube.h
     src/shapes/shape.h
+    src/shaders/fbo.cpp src/shaders/fbo.h
 )
 
 # GLM: this creates its library and allows you to `#include "glm/..."`
@@ -70,6 +71,14 @@ qt6_add_resources(${PROJECT_NAME} "Resources"
     FILES
         resources/shaders/default.frag
         resources/shaders/default.vert
+        resources/shaders/occlusion.frag
+        resources/shaders/occlusion.vert
+        resources/shaders/depth_fog.frag
+        resources/shaders/depth_fog.vert
+        resources/shaders/godrays.frag
+        resources/shaders/godrays.vert
+        resources/shaders/copy.frag
+        resources/shaders/copy.vert
 )
 
 # GLEW: this provides support for Windows (including 64-bit)

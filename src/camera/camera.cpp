@@ -198,7 +198,7 @@ void Camera::rotate(float delta_x, float delta_y) {
     glm::vec3 look_n = glm::normalize(rotation_y * m_look);
 
     float dotWithWorldUp = glm::dot(look_n, world);
-    if (glm::abs(dotWithWorldUp) < 0.99f) {  // Allow up to ~82 degrees
+    if (glm::abs(dotWithWorldUp) < 0.99f) {
         m_look = look_n;
     }
 

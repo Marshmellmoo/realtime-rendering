@@ -4,6 +4,9 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <iostream>
+#include "glm/ext/matrix_clip_space.hpp"
+#include "glm/ext/matrix_transform.hpp"
+#include "glm/gtc/type_ptr.hpp"
 #include "settings.h"
 
 #include "utils/shaderloader.h"
@@ -32,6 +35,14 @@ Realtime::Realtime(QWidget *parent)
     // If you must use this function, do not edit anything above this
     m_view = glm::mat4(1.0f);
     m_projection = glm::mat4(1.0f);
+    
+    // Initialize global lighting with default values
+    m_global.ka = 0.5f;
+    m_global.kd = 0.5f;
+    m_global.ks = 0.5f;
+
+
+
 }
 
 void Realtime::finish() {
@@ -60,6 +71,9 @@ void Realtime::initializeGL() {
 
     // Allows OpenGL to draw objects appropriately on top of one another
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_CULL_FACE);
+
     // Tells OpenGL to only draw the front face
     glEnable(GL_CULL_FACE);
     // Tells OpenGL how big the screen is
@@ -67,16 +81,196 @@ void Realtime::initializeGL() {
 
     // Students: anything requiring OpenGL calls when the program starts should be done here
 
-    m_phong = ShaderLoader::createShaderProgram(
+    m_defaultFBO = 4;
+
+    m_phong_shader = ShaderLoader::createShaderProgram(
         ":/resources/shaders/default.vert",
         ":/resources/shaders/default.frag"
     );
 
+    m_occlusion_shader = ShaderLoader::createShaderProgram(
+        ":/resources/shaders/occlusion.vert",
+        ":/resources/shaders/occlusion.frag"
+    );
+
+    m_copy_shader = ShaderLoader::createShaderProgram(
+        ":/resources/shaders/copy.vert",
+        ":/resources/shaders/copy.frag");
+
+    m_godrays_shader = ShaderLoader::createShaderProgram(
+        ":/resources/shaders/godrays.vert",
+        ":/resources/shaders/godrays.frag");
+
+    // m_fog_shader = ShaderLoader::createShaderProgram(
+    //     ":resources/shaders/depth_fog.vert",
+    //     ":resources/shaders/depth_fog.frag");
+
+    initializeFBO();
+    initializeOcclusionFBO();
+    initializeDepthFogFBO();
+
+    initializeFullscreenQuad();
     initializeShapeGeometry();
+
     geometryInit = true;
+
+    m_enable_godrays = true;
+    m_godrays_samples = 100;
+    m_godrays_density = 0.5f;
+    m_godrays_weight = 0.3f;
+    m_godrays_decay = 0.95f;
+    m_godrays_exposure = 0.5f;
 
 }
 
+void Realtime::initializeFBO() {
+
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+
+    glGenFramebuffers(1, &m_scene_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo);
+
+    glGenTextures(1, &m_scene_color);
+    glBindTexture(GL_TEXTURE_2D, m_scene_color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenTextures(1, &m_scene_depth);
+    glBindTexture(GL_TEXTURE_2D, m_scene_depth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height, 
+        0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, m_scene_color, 0);
+    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_scene_depth, 0);
+    glDrawBuffer(GL_NONE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+    // bind to related fbo, pass color tture val to shader, unbind fbo
+
+}
+
+void Realtime::initializeDepthFogFBO() {
+
+    int width = (size().width() * m_devicePixelRatio);
+    int height = (size().height() * m_devicePixelRatio);
+
+    glGenFramebuffers(1, &m_fog_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, m_fog_color, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, m_fog_depth);
+
+    glGenTextures(1, &m_fog_color);
+    glBindTexture(GL_TEXTURE_2D, m_fog_color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenRenderbuffers(1, &m_fog_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_fog_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, m_occlusion_texture, 0);
+
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, m_occlusion_depth);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+}
+
+void Realtime::initializeOcclusionFBO() {
+
+    int width = (size().width() * m_devicePixelRatio);
+    int height = (size().height() * m_devicePixelRatio);
+
+    glGenTextures(1, &m_occlusion_texture);
+    glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+
+    glGenRenderbuffers(1, &m_occlusion_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_occlusion_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+
+    glGenFramebuffers(1, &m_occlusion_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_occlusion_fbo);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, m_occlusion_texture, 0);
+
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_RENDERBUFFER, m_occlusion_depth);
+
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+}
+
+void Realtime::initializeFullscreenQuad() {
+
+    std::vector<GLfloat> quadData = {
+
+       -1.0f,  1.0f,  0.0f, 1.0f,
+       -1.0f, -1.0f,  0.0f, 0.0f,
+        1.0f, -1.0f,  1.0f, 0.0f,
+
+       -1.0f,  1.0f,  0.0f, 1.0f,
+        1.0f, -1.0f,  1.0f, 0.0f,
+        1.0f,  1.0f,  1.0f, 1.0f
+
+    };
+
+    glGenVertexArrays(1, &m_fullscreen_vao);
+    glGenBuffers(1, &m_fullscreen_vbo);
+
+    glBindVertexArray(m_fullscreen_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_fullscreen_vbo);
+
+    glBufferData(GL_ARRAY_BUFFER,
+                 quadData.size() * sizeof(GLfloat),
+                 quadData.data(),
+                 GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
+                          4 * sizeof(GLfloat),
+                          (void *)0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+                          4 * sizeof(GLfloat),
+                          (void *)(2 * sizeof(GLfloat)));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+}
 
 void Realtime::initializeShapeGeometry() {
 
@@ -212,34 +406,200 @@ void Realtime::initializeShapeGeometry() {
 
 void Realtime::paintGL() {
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glUseProgram(m_phong);
+    m_enable_godrays = true;
+    if (m_enable_godrays) renderOcclusion();
 
-    glUniformMatrix4fv(glGetUniformLocation(m_phong, "view"),
+    render();
+
+    if (m_enable_godrays) blendCrepuscular();
+
+    // glBindVertexArray(m_fullscreen_vao);
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
+
+}
+
+void Realtime::render() {
+    
+    // glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo);
+
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+
+    glViewport(0, 0, width, height);
+
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glUseProgram(m_phong_shader);
+
+    m_view = m_camera.getViewMatrix();
+    m_projection = m_camera.getProjectionMatrix();
+
+    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "view"),
                        1, GL_FALSE, &m_view[0][0]);
-    glUniformMatrix4fv(glGetUniformLocation(m_phong, "proj"),
+    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "proj"),
                        1, GL_FALSE, &m_projection[0][0]);
 
     glm::vec3 camPosition = m_camera.getInverseViewMatrix()[3];
-    glUniform3fv(glGetUniformLocation(m_phong, "cameraPosition"),
+    glUniform3fv(glGetUniformLocation(m_phong_shader, "cameraPosition"),
                  1, &camPosition[0]);
 
-    glUniform1f(glGetUniformLocation(m_phong, "ka"),
+    glUniform1f(glGetUniformLocation(m_phong_shader, "ka"),
                 m_global.ka);
-    glUniform1f(glGetUniformLocation(m_phong, "kd"),
+    glUniform1f(glGetUniformLocation(m_phong_shader, "kd"),
                 m_global.kd);
-    glUniform1f(glGetUniformLocation(m_phong, "ks"),
+    glUniform1f(glGetUniformLocation(m_phong_shader, "ks"),
                 m_global.ks);
 
-    m_view = m_camera.getViewMatrix();
+    passLightsToShader(m_phong_shader);
 
-    passLightsToShader(m_phong);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
 
     for (const auto& shape : m_renderData.shapes) {
-        drawShape(shape);
+        drawShape(shape, m_phong_shader);
     }
 
     glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+
+
+}
+
+void Realtime::renderOcclusion() {
+
+    // glBindFramebuffer(GL_FRAMEBUFFER, m_occlusion_fbo);
+
+    int width = (size().width() * m_devicePixelRatio);
+    int height = (size().height() * m_devicePixelRatio);
+    glViewport(0, 0, width, height);
+
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDisable(GL_DEPTH_TEST);
+
+    glUseProgram(m_occlusion_shader);
+
+    m_view = m_camera.getViewMatrix();
+    m_projection = m_camera.getProjectionMatrix();
+
+    glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "view"),
+                       1, GL_FALSE, &m_view[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "proj"),
+                       1, GL_FALSE, &m_projection[0][0]);
+
+    for (const auto& shape : m_renderData.shapes) {
+        drawShape(shape, m_occlusion_shader);
+    }
+
+    glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+}
+
+void Realtime::blendDepthFog() {
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_BLEND);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
+    glUseProgram(m_fog_shader);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_fog_color);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "depth"), 0);
+
+    glUniform1i(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
+
+    glUseProgram(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+
+}
+
+void Realtime::blendCrepuscular() {
+    
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+    glViewport(0, 0, width, height);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDisable(GL_DEPTH_TEST);
+
+    glUseProgram(m_godrays_shader);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
+    glUniform1i(glGetUniformLocation(m_godrays_shader, "occlusionTexture"), 0);
+
+    m_view = m_camera.getViewMatrix();
+    m_projection = m_camera.getProjectionMatrix();
+
+    auto info = m_renderData.lights;
+    std::vector<glm::vec2> lightScreenPositions;
+
+    for (int i = 0; i < info.size(); i++) {
+
+        const SceneLightData& light = m_renderData.lights[i];
+        glm::vec3 lightWorldPosition;
+
+        if (light.type == LightType::LIGHT_DIRECTIONAL) {
+
+            glm::vec3 lightDir = glm::normalize(glm::vec3(light.dir));
+            glm::vec3 camPos = m_camera.getInverseViewMatrix()[3];
+            lightWorldPosition = camPos - lightDir * 1000.0f;
+
+        } else if (light.type == LightType::LIGHT_POINT) {
+
+            lightWorldPosition = glm::vec3(light.pos);
+
+        } else {
+
+            lightWorldPosition = glm::vec3(light.pos);
+
+        }
+
+        glm::vec4 lightPosClip = m_projection * m_view * glm::vec4(lightWorldPosition, 1.0f);
+        glm::vec3 lightPosNDC = glm::vec3(lightPosClip) / lightPosClip.w;
+        glm::vec2 lightPosScreen = (glm::vec2(lightPosNDC.x, lightPosNDC.y) + 1.0f) * 0.5f;
+
+        lightScreenPositions.push_back(lightPosScreen);
+
+    }
+
+    if (lightScreenPositions.empty()) return;
+
+
+    glUniform2fv(glGetUniformLocation(m_godrays_shader, "lightScreenPositions"),
+                 lightScreenPositions.size(), glm::value_ptr(lightScreenPositions[0]));
+
+    glUniform1i(glGetUniformLocation(m_godrays_shader, "numSamples"),
+                m_godrays_samples);
+    glUniform1f(glGetUniformLocation(m_godrays_shader, "density"),
+                m_godrays_density);
+    glUniform1f(glGetUniformLocation(m_godrays_shader, "weight"),
+                m_godrays_weight);
+    glUniform1f(glGetUniformLocation(m_godrays_shader, "decay"),
+                m_godrays_decay);
+    glUniform1f(glGetUniformLocation(m_godrays_shader, "exposure"),
+                m_godrays_exposure);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glBindVertexArray(m_fullscreen_vao);
+    glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glUseProgram(0);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
 
 }
 
@@ -287,7 +647,6 @@ void Realtime::passLightsToShader(GLuint shader) {
                      1, &function[0]);
 
         // Initializing Position =
-
         if (type == 1 || type == 2) {
 
             glm::vec4 position = light.pos;
@@ -298,7 +657,6 @@ void Realtime::passLightsToShader(GLuint shader) {
 
 
         // Initializing Direction =
-
         if (type == 0 || type == 2) {
 
             glm::vec4 direction = light.dir;
@@ -308,7 +666,6 @@ void Realtime::passLightsToShader(GLuint shader) {
         }
 
         // Initializing Penumbra & Angle =
-
         if (type == 2) {
 
             float penumbra = light.penumbra;
@@ -323,27 +680,38 @@ void Realtime::passLightsToShader(GLuint shader) {
 
 }
 
-void Realtime::drawShape(const RenderShapeData& shape) {
+void Realtime::drawShape(const RenderShapeData& shape, GLuint shader) {
 
-    glUniformMatrix4fv(glGetUniformLocation(m_phong, "model"),
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"),
                        1, GL_FALSE, &shape.ctm[0][0]);
 
-    auto info = shape.primitive.material;
+    GLint invModelLoc = glGetUniformLocation(shader, "invModel");
+    if (invModelLoc != -1) {
 
-    glm::vec4 ambient = info.cAmbient;
-    glm::vec4 diffuse = info.cDiffuse;
-    glm::vec4 specular = info.cSpecular;
+        glm::mat4 invModel = glm::inverse(shape.ctm);
+        glUniformMatrix4fv(invModelLoc, 1, GL_FALSE, &invModel[0][0]);
 
+    }
 
-    glUniform4fv(glGetUniformLocation(m_phong, "c_ambient"),
-                 1, &ambient[0]);
-    glUniform4fv(glGetUniformLocation(m_phong, "c_diffuse"),
-                 1, &diffuse[0]);
-    glUniform4fv(glGetUniformLocation(m_phong, "c_specular"),
-                 1, &specular[0]);
+    GLint ambientLoc = glGetUniformLocation(shader, "c_ambient");
+    GLint diffuseLoc = glGetUniformLocation(shader, "c_diffuse");
+    GLint specularLoc = glGetUniformLocation(shader, "c_specular");
+    GLint shininessLoc = glGetUniformLocation(shader, "shininess");
 
-    glUniform1f(glGetUniformLocation(m_phong, "shininess"),
-                info.shininess);
+    if (ambientLoc != -1 || diffuseLoc != -1 || specularLoc != -1 || shininessLoc != -1) {
+
+        auto info = shape.primitive.material;
+
+        glm::vec4 ambient = info.cAmbient;
+        glm::vec4 diffuse = info.cDiffuse;
+        glm::vec4 specular = info.cSpecular;
+
+        if (ambientLoc != -1) glUniform4fv(ambientLoc, 1, &ambient[0]);
+        if (diffuseLoc != -1) glUniform4fv(diffuseLoc, 1, &diffuse[0]);
+        if (specularLoc != -1) glUniform4fv(specularLoc, 1, &specular[0]);
+        if (shininessLoc != -1) glUniform1f(shininessLoc, info.shininess);
+
+    }
 
     GLuint vao;
     int verticies;
@@ -380,6 +748,8 @@ void Realtime::drawShape(const RenderShapeData& shape) {
     glDrawArrays(GL_TRIANGLES, 0, verticies);
     glBindVertexArray(0);
 
+    // call bindframebuffer(gl_framebuffer, 0) before final pass / blend
+
 }
 
 void Realtime::resizeGL(int w, int h) {
@@ -389,6 +759,40 @@ void Realtime::resizeGL(int w, int h) {
     // Students: anything requiring OpenGL calls when the program starts should be done here
     float aspectRatio = (float)w / (float)h;
     m_camera.setAspectRatio(aspectRatio);
+
+    // initializeDepthBuffer();
+
+}
+
+void Realtime::deleteFBOTextures() {
+
+    // int width = size().width() * m_devicePixelRatio;
+    // int height = size().height() * m_devicePixelRatio;
+
+    // glDeleteTextures(1, &m_color);
+    // // glDeleteTextures(1, &m_depth);
+
+    // glGenTextures(1, &m_color);
+    // glBindTexture(GL_TEXTURE_2D, m_color);
+    // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+    //              GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // // glGenTextures(1, &m_depth);
+    // // glBindTexture(GL_TEXTURE_2D, m_depth);
+    // // glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
+    // //              GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    // // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    // // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+    //                        GL_TEXTURE_2D, m_color, 0);
+    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+    //                        GL_TEXTURE_2D, m_depth, 0);
+
+    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 }
 
@@ -429,6 +833,10 @@ void Realtime::sceneChanged() {
     m_view = m_camera.getViewMatrix();
     m_projection = m_camera.getProjectionMatrix();
 
+    currParam1 = settings.shapeParameter1;
+    currParam2 = settings.shapeParameter2;
+
+    initializeFBO();
     initializeShapeGeometry();
     update(); // asks for a PaintGL() call to occur
 }
@@ -438,10 +846,13 @@ void Realtime::settingsChanged() {
     m_camera.setNearPlane(settings.nearPlane);
     m_camera.setFarPlane(settings.farPlane);
 
+    // Checks if the camera has moved within the camera object .
     m_view = m_camera.getViewMatrix();
     m_projection = m_camera.getProjectionMatrix();
 
-    if (geometryInit) initializeShapeGeometry();
+    if (geometryInit && (currParam1 != settings.shapeParameter1 || currParam2 != settings.shapeParameter1)) {
+        initializeShapeGeometry();
+    }
 
     update(); // asks for a PaintGL() call to occur
 
@@ -480,7 +891,6 @@ void Realtime::mouseMoveEvent(QMouseEvent *event) {
         int deltaY = posY - m_prev_mouse_pos.y;
         m_prev_mouse_pos = glm::vec2(posX, posY);
 
-        // Rotation sensitivity
         float sensitivity = 0.002f;
         m_camera.rotate(deltaX * sensitivity, deltaY * sensitivity);
         m_view = m_camera.getViewMatrix();
@@ -514,7 +924,6 @@ void Realtime::timerEvent(QTimerEvent *event) {
     if (glm::length(movement) > 0.0f) {
 
         m_camera.translate(movement);
-        // m_view = m_camera.getViewMatrix();
         update();
 
     }
