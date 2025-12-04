@@ -101,13 +101,13 @@ void Realtime::initializeGL() {
         ":/resources/shaders/godrays.vert",
         ":/resources/shaders/godrays.frag");
 
-    // m_fog_shader = ShaderLoader::createShaderProgram(
-    //     ":resources/shaders/depth_fog.vert",
-    //     ":resources/shaders/depth_fog.frag");
+    m_fog_shader = ShaderLoader::createShaderProgram(
+        ":/resources/shaders/depth_fog.vert",
+        ":/resources/shaders/depth_fog.frag");
 
     initializeFBO();
     initializeOcclusionFBO();
-    initializeDepthFogFBO();
+    // initializeDepthFogFBO();
 
     initializeFullscreenQuad();
     initializeShapeGeometry();
@@ -119,6 +119,11 @@ void Realtime::initializeGL() {
     m_godrays_weight = 0.3f;
     m_godrays_decay = 0.95f;
     m_godrays_exposure = 0.5f;
+
+    m_fog_maxdist = 1.0;
+    m_fog_mindist = 0.5;
+    m_fog_rgb = glm::vec3(0.5, 0.5, 0.5);
+    m_enable_depth_fog = true;
 
 }
 
@@ -159,48 +164,6 @@ void Realtime::initializeFBO() {
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
 
     // bind to related fbo, pass color tture val to shader, unbind fbo
-
-}
-
-void Realtime::initializeDepthFogFBO() {
-
-    int width = (size().width() * m_devicePixelRatio);
-    int height = (size().height() * m_devicePixelRatio);
-
-    glGenFramebuffers(1, &m_fog_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
-
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, m_fog_color, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                              GL_RENDERBUFFER, m_fog_depth);
-
-    glGenTextures(1, &m_fog_color);
-    glBindTexture(GL_TEXTURE_2D, m_fog_color);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
-                 GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glGenTextures(1, &m_fog_depth);
-    glBindTexture(GL_TEXTURE_2D, m_fog_depth);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height,
-                 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, m_fog_color, 0);
-
-    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_fog_depth, 0);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
 
 }
 
@@ -414,26 +377,14 @@ void Realtime::paintGL() {
     int width  = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
 
-    // 1) Render scene to m_scene_fbo
     render();
 
-    if (m_enable_godrays) renderOcclusion();
-
-    copy();
-
-    // -----------------------------
-    // 4) Blend godrays on top
-    // -----------------------------
-    if (m_enable_godrays) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);   // additive
-        blendCrepuscular();
-        glDisable(GL_BLEND);
+    if (m_enable_depth_fog) {
+        blendDepthFog();
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glBindVertexArray(m_fullscreen_vao);
-    glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
@@ -556,28 +507,35 @@ void Realtime::renderOcclusion() {
 
 void Realtime::blendDepthFog() {
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_BLEND);
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+    glViewport(0, 0, width, height);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     glUseProgram(m_fog_shader);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_fog_color);
-    glUniform1i(glGetUniformLocation(m_fog_shader, "depth"), 0);
+    glBindTexture(GL_TEXTURE_2D, m_scene_color);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "sceneTexture"), 0);
 
-    glUniform1i(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
-    glUniform1i(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_scene_depth);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "depthTexture"), 1);
 
-    glUseProgram(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glUniform1f(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
+    glUniform1f(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
+    glUniform3fv(glGetUniformLocation(m_fog_shader, "fogColour"), 1, &m_fog_rgb[0]);
+
+    glBindVertexArray(m_fullscreen_vao);
+    glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glEnable(GL_DEPTH_TEST);
 
 }
 
 void Realtime::blendCrepuscular() {
-    
-    std::cout << "help" << std::endl;
 
     int width = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
