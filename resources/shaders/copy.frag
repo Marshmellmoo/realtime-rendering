@@ -1,10 +1,11 @@
 #version 330 core
 
-layout(location = 0) out float fragmentdepth;
+out vec4 fragColor;
+
+in vec2 texCoord;
+
+uniform sampler2D sceneTexture;
 
 void main() {
-
-    fragmentdepth = gl_FragCoord.z;
-
+    fragColor = texture(sceneTexture, texCoord);
 }
-

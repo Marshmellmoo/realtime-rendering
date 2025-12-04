@@ -1,11 +1,11 @@
 #version 330 core
 
-layout(location = 0) in vec3 vertexPosition_modelspace;
-uniform mat4 depthMVP;
-uniform sampler2D depth;
+layout(location = 0) in vec2 position;
+layout(location = 1) in vec2 uv;
+
+out vec2 texCoord;
 
 void main() {
-
-    gl_Position = depthMVP * vec4(vertexPosition_modelspace, 1);
-
+    texCoord = uv;
+    gl_Position = vec4(position, 0.0, 1.0);
 }
