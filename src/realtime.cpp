@@ -35,7 +35,7 @@ Realtime::Realtime(QWidget *parent)
     // If you must use this function, do not edit anything above this
     m_view = glm::mat4(1.0f);
     m_projection = glm::mat4(1.0f);
-    
+
     // Initialize global lighting with default values
     m_global.ka = 0.5f;
     m_global.kd = 0.5f;
@@ -86,12 +86,30 @@ void Realtime::initializeGL() {
     m_phong_shader = ShaderLoader::createShaderProgram(
         ":/resources/shaders/default.vert",
         ":/resources/shaders/default.frag"
-    );
+        );
 
     m_occlusion_shader = ShaderLoader::createShaderProgram(
         ":/resources/shaders/occlusion.vert",
         ":/resources/shaders/occlusion.frag"
-    );
+        );
+
+    // Validate occlusion shader
+    if (m_occlusion_shader == 0) {
+        std::cerr << "[ERROR] Failed to create occlusion shader program (returned 0)" << std::endl;
+    } else {
+        GLint linkStatus = 0;
+        glGetProgramiv(m_occlusion_shader, GL_LINK_STATUS, &linkStatus);
+        if (linkStatus != GL_TRUE) {
+            std::cerr << "[ERROR] Occlusion shader program link failed" << std::endl;
+            GLint logLen = 0;
+            glGetProgramiv(m_occlusion_shader, GL_INFO_LOG_LENGTH, &logLen);
+            if (logLen > 0) {
+                std::vector<GLchar> logText(logLen);
+                glGetProgramInfoLog(m_occlusion_shader, logLen, nullptr, logText.data());
+                std::cerr << "Link log: " << logText.data() << std::endl;
+            }
+        }
+    }
 
     m_copy_shader = ShaderLoader::createShaderProgram(
         ":/resources/shaders/copy.vert",
@@ -115,10 +133,16 @@ void Realtime::initializeGL() {
     geometryInit = true;
 
     m_enable_godrays = true;
-    m_godrays_density = 0.5f;
-    m_godrays_weight = 0.3f;
-    m_godrays_decay = 0.95f;
-    m_godrays_exposure = 0.5f;
+    m_godrays_samples = 100;    // Number of samples for radial blur
+    m_godrays_density = 1.0f;   // Ray spread density
+    m_godrays_weight = 0.01f;   // Weight per sample (matches reference)
+    m_godrays_decay = 1.0f;     // Decay factor between samples (matches reference)
+    m_godrays_exposure = 1.0f;  // Exposure for visibility (matches reference)
+
+    m_fog_maxdist = 1.0;
+    m_fog_mindist = 0.5;
+    m_fog_rgb = glm::vec3(0.5, 0.5, 0.5);
+    m_enable_depth_fog = true;
 
 }
 
@@ -143,8 +167,8 @@ void Realtime::initializeFBO() {
 
     glGenTextures(1, &m_scene_depth);
     glBindTexture(GL_TEXTURE_2D, m_scene_depth);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height, 
-        0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height,
+                 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -170,11 +194,7 @@ void Realtime::initializeDepthFogFBO() {
     glGenFramebuffers(1, &m_fog_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, m_fog_color, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                              GL_RENDERBUFFER, m_fog_depth);
-
+    // Create color texture FIRST
     glGenTextures(1, &m_fog_color);
     glBindTexture(GL_TEXTURE_2D, m_fog_color);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
@@ -184,16 +204,17 @@ void Realtime::initializeDepthFogFBO() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+    // Create depth texture SECOND
     glGenTextures(1, &m_fog_depth);
     glBindTexture(GL_TEXTURE_2D, m_fog_depth);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height,
                  0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+    // NOW attach them
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, m_fog_color, 0);
 
@@ -205,9 +226,12 @@ void Realtime::initializeDepthFogFBO() {
 }
 
 void Realtime::initializeOcclusionFBO() {
+    // Use a lower-resolution occlusion map (half resolution) for better performance
+    int width = (size().width() * m_devicePixelRatio) / 2;
+    int height = (size().height() * m_devicePixelRatio) / 2;
 
-    int width = (size().width() * m_devicePixelRatio);
-    int height = (size().height() * m_devicePixelRatio);
+    if (width < 1) width = 1;
+    if (height < 1) height = 1;
 
     glGenTextures(1, &m_occlusion_texture);
     glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
@@ -232,6 +256,13 @@ void Realtime::initializeOcclusionFBO() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                               GL_RENDERBUFFER, m_occlusion_depth);
 
+    // Ensure framebuffer is complete in debug builds (optional)
+#ifndef NDEBUG
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "Occlusion FBO incomplete: " << status << std::endl;
+    }
+#endif
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
 
@@ -241,39 +272,39 @@ void Realtime::initializeFullscreenQuad() {
 
     std::vector<GLfloat> quadData = {
 
-       -1.0f,  1.0f,  0.0f, 1.0f,
-       -1.0f, -1.0f,  0.0f, 0.0f,
+    -1.0f,  1.0f,  0.0f, 1.0f,
+        -1.0f, -1.0f,  0.0f, 0.0f,
         1.0f, -1.0f,  1.0f, 0.0f,
 
-       -1.0f,  1.0f,  0.0f, 1.0f,
+        -1.0f,  1.0f,  0.0f, 1.0f,
         1.0f, -1.0f,  1.0f, 0.0f,
         1.0f,  1.0f,  1.0f, 1.0f
 
-    };
+};
 
-    glGenVertexArrays(1, &m_fullscreen_vao);
-    glGenBuffers(1, &m_fullscreen_vbo);
+glGenVertexArrays(1, &m_fullscreen_vao);
+glGenBuffers(1, &m_fullscreen_vbo);
 
-    glBindVertexArray(m_fullscreen_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_fullscreen_vbo);
+glBindVertexArray(m_fullscreen_vao);
+glBindBuffer(GL_ARRAY_BUFFER, m_fullscreen_vbo);
 
-    glBufferData(GL_ARRAY_BUFFER,
-                 quadData.size() * sizeof(GLfloat),
-                 quadData.data(),
-                 GL_STATIC_DRAW);
+glBufferData(GL_ARRAY_BUFFER,
+             quadData.size() * sizeof(GLfloat),
+             quadData.data(),
+             GL_STATIC_DRAW);
 
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-                          4 * sizeof(GLfloat),
-                          (void *)0);
+glEnableVertexAttribArray(0);
+glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
+                      4 * sizeof(GLfloat),
+                      (void *)0);
 
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
-                          4 * sizeof(GLfloat),
-                          (void *)(2 * sizeof(GLfloat)));
+glEnableVertexAttribArray(1);
+glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+                      4 * sizeof(GLfloat),
+                      (void *)(2 * sizeof(GLfloat)));
 
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+glBindVertexArray(0);
+bool debugShowOcclusion = false; // disabled by default to allow normal compositing
 
 }
 
@@ -414,42 +445,74 @@ void Realtime::paintGL() {
     int width  = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
 
-    // 1) Render scene to m_scene_fbo
-    render();
-
-    if (m_enable_godrays) renderOcclusion();
-
-    copy();
-
-    // -----------------------------
-    // 4) Blend godrays on top
-    // -----------------------------
+    // =============================================
+    // PASS 1: Occlusion Pre-Pass
+    // =============================================
+    // Render geometry black, lights white to half-res occlusion FBO
     if (m_enable_godrays) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);   // additive
-        blendCrepuscular();
-        glDisable(GL_BLEND);
+        renderOcclusion();
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindVertexArray(m_fullscreen_vao);
-    glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
+    // =============================================
+    // PASS 2: Main Scene Render
+    // =============================================
+    // Render normally to default FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glViewport(0, 0, width, height);
+    glClearColor(0.05f, 0.0f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
+    // Ensure blending is disabled for opaque geometry rendering
+    glDisable(GL_BLEND);
+    glUseProgram(m_phong_shader);
+
+    m_view = m_camera.getViewMatrix();
+    m_projection = m_camera.getProjectionMatrix();
+
+    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "view"),
+                       1, GL_FALSE, &m_view[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "proj"),
+                       1, GL_FALSE, &m_projection[0][0]);
+
+    glm::vec3 camPosition = m_camera.getInverseViewMatrix()[3];
+    glUniform3fv(glGetUniformLocation(m_phong_shader, "cameraPosition"),
+                 1, &camPosition[0]);
+
+    glUniform1f(glGetUniformLocation(m_phong_shader, "ka"), m_global.ka);
+    glUniform1f(glGetUniformLocation(m_phong_shader, "kd"), m_global.kd);
+    glUniform1f(glGetUniformLocation(m_phong_shader, "ks"), m_global.ks);
+
+    passLightsToShader(m_phong_shader);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+
+    for (const auto& shape : m_renderData.shapes) {
+        drawShape(shape, m_phong_shader);
+    }
+
+    // =============================================
+    // PASS 3: Post-Processing God Rays
+    // =============================================
+    // Apply godrays WITHOUT clearing framebuffer (blend onto rendered scene)
+    if (m_enable_godrays) {
+        glDisable(GL_DEPTH_TEST);  // Disable depth test for post-process
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glEnable(GL_BLEND);
+        blendCrepuscular();
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);  // Re-enable for consistency
+    }
 
     glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
-
-    glEnable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-
-    glEnable(GL_DEPTH_TEST);
 
 }
 
 void Realtime::render() {
-    
+
     glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo);
 
     int width = size().width() * m_devicePixelRatio;
@@ -502,7 +565,6 @@ void Realtime::copy() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     glViewport(0, 0, width, height);
-    glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
 
     glUseProgram(m_copy_shader);
@@ -513,8 +575,11 @@ void Realtime::copy() {
 
     glBindVertexArray(m_fullscreen_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
 
     glUseProgram(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glEnable(GL_DEPTH_TEST);
 
 }
 
@@ -522,16 +587,12 @@ void Realtime::renderOcclusion() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_occlusion_fbo);
 
-    int width = (size().width() * m_devicePixelRatio);
-    int height = (size().height() * m_devicePixelRatio);
+    int width = (size().width() * m_devicePixelRatio) / 2;
+    int height = (size().height() * m_devicePixelRatio) / 2;
     glViewport(0, 0, width, height);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // glEnable(GL_BLEND);
-    // glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-    // glDisable(GL_DEPTH_TEST);
 
     glUseProgram(m_occlusion_shader);
 
@@ -543,53 +604,168 @@ void Realtime::renderOcclusion() {
     glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "proj"),
                        1, GL_FALSE, &m_projection[0][0]);
 
-    for (const auto& shape : m_renderData.shapes) {
-        drawShape(shape, m_occlusion_shader);
-    }
+    // Render all geometry as black
+    GLint colorLoc = glGetUniformLocation(m_occlusion_shader, "occlusionColor");
+    glUniform4f(colorLoc, 0.0f, 0.0f, 0.0f, 1.0f);
 
-    if (glGetError() != GL_NO_ERROR) std::cout << "Occlusion" << std::endl;
+    int shapeCount = 0;
+    for (const auto& shape : m_renderData.shapes) {
+        shapeCount++;
+        glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "model"),
+                           1, GL_FALSE, &shape.ctm[0][0]);
+        
+        GLuint vao;
+        int verticies;
+
+        switch(shape.primitive.type) {
+        case PrimitiveType::PRIMITIVE_CUBE:
+            vao = m_cubeGeometry.vao;
+            verticies = m_cubeGeometry.verticies;
+            break;
+        case PrimitiveType::PRIMITIVE_SPHERE:
+            vao = m_sphereGeometry.vao;
+            verticies = m_sphereGeometry.verticies;
+            break;
+        case PrimitiveType::PRIMITIVE_CONE:
+            vao = m_coneGeometry.vao;
+            verticies = m_coneGeometry.verticies;
+            break;
+        case PrimitiveType::PRIMITIVE_CYLINDER:
+            vao = m_cylinderGeometry.vao;
+            verticies = m_cylinderGeometry.verticies;
+            break;
+        case PrimitiveType::PRIMITIVE_MESH:
+            continue;
+        default:
+            continue;
+        }
+        
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, verticies);
+        glBindVertexArray(0);
+    }
+    
+    std::cout << "[OCCLUSION] Drew " << shapeCount << " shapes" << std::endl;
+
+    // Render light sources as white
+    glUniform4f(colorLoc, 1.0f, 1.0f, 1.0f, 1.0f);
+
+    int lightCount = 0;
+
+    // Render light geometry into the occlusion map **without depth testing** so
+    // the occlusion texture contains a white marker at the light's screen
+    // position even if the light model is behind other geometry. This makes
+    // the radial blur originate from the correct screen location and allows
+    // rays to "peak through" occluders.
+    glDisable(GL_DEPTH_TEST);
+    for (const auto& light : m_renderData.lights) {
+        lightCount++;
+        glm::mat4 lightModel = glm::mat4(1.0f);
+
+        if (light.type == LightType::LIGHT_DIRECTIONAL) {
+            glm::vec3 lightDir = glm::normalize(glm::vec3(light.dir));
+            // Place the light sphere 100 units along the direction vector
+            glm::vec3 lightWorldPos = lightDir * 100.0f;
+            lightModel = glm::translate(lightModel, lightWorldPos);
+            lightModel = glm::scale(lightModel, glm::vec3(15.0f));
+        } else if (light.type == LightType::LIGHT_POINT) {
+            // Point lights: render at actual position with smaller radius
+            lightModel = glm::translate(lightModel, glm::vec3(light.pos));
+            lightModel = glm::scale(lightModel, glm::vec3(0.5f));
+        } else {
+            // Spot lights: render at actual position
+            lightModel = glm::translate(lightModel, glm::vec3(light.pos));
+            lightModel = glm::scale(lightModel, glm::vec3(0.3f));
+        }
+
+        glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "model"),
+                           1, GL_FALSE, &lightModel[0][0]);
+
+        // Render light as a sphere (no depth test)
+        glBindVertexArray(m_sphereGeometry.vao);
+        glDrawArrays(GL_TRIANGLES, 0, m_sphereGeometry.verticies);
+        glBindVertexArray(0);
+    }
+    // restore depth testing for subsequent passes
+    glEnable(GL_DEPTH_TEST);
+    std::cout << "[OCCLUSION] Drew " << lightCount << " lights" << std::endl;
 
     glUseProgram(0);
+    
+    // DEBUG: Read a pixel to verify occlusion FBO has content
+    // Note: viewport is half-res, so read from center of that half-res texture
+    {
+        int occlusionWidth = width;  // already set to size().width() / 2
+        int occlusionHeight = height; // already set to size().height() / 2
+        unsigned char pixel[3] = {0, 0, 0};
+        glReadPixels(occlusionWidth/2, occlusionHeight/2, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, pixel);
+        std::cout << "[OCCLUSION] Center pixel: R=" << (int)pixel[0] << " G=" << (int)pixel[1] << " B=" << (int)pixel[2] << std::endl;
+    }
+    
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    
+    // Reset viewport to main window
+    int mainWidth = size().width() * m_devicePixelRatio;
+    int mainHeight = size().height() * m_devicePixelRatio;
+    glViewport(0, 0, mainWidth, mainHeight);
 
 }
 
 void Realtime::blendDepthFog() {
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_BLEND);
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+    glViewport(0, 0, width, height);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     glUseProgram(m_fog_shader);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_fog_color);
-    glUniform1i(glGetUniformLocation(m_fog_shader, "depth"), 0);
+    glBindTexture(GL_TEXTURE_2D, m_scene_color);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "sceneTexture"), 0);
 
-    glUniform1i(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
-    glUniform1i(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_scene_depth);
+    glUniform1i(glGetUniformLocation(m_fog_shader, "depthTexture"), 1);
 
-    glUseProgram(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glUniform1f(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
+    glUniform1f(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
+    glUniform3fv(glGetUniformLocation(m_fog_shader, "fogColour"), 1, &m_fog_rgb[0]);
+
+    glBindVertexArray(m_fullscreen_vao);
+    glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glEnable(GL_DEPTH_TEST);
 
 }
 
 void Realtime::blendCrepuscular() {
-    
-    std::cout << "help" << std::endl;
 
     int width = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
     glViewport(0, 0, width, height);
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-    glDisable(GL_DEPTH_TEST);
+    // DEBUG: Display occlusion texture to verify it has content
+    bool debugOcclusion = false;  // Set to true to visualize occlusion map
+    if (debugOcclusion) {
+        glDisable(GL_BLEND);
+        glUseProgram(m_copy_shader);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
+        glUniform1i(glGetUniformLocation(m_copy_shader, "sceneTexture"), 0);
+        glBindVertexArray(m_fullscreen_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+        glUseProgram(0);
+        glEnable(GL_BLEND);
+        return;
+    }
 
     glUseProgram(m_godrays_shader);
 
-    // Bind occlusion texture
+    // Bind occlusion texture to unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
     glUniform1i(glGetUniformLocation(m_godrays_shader, "occlusionTexture"), 0);
@@ -597,47 +773,30 @@ void Realtime::blendCrepuscular() {
     m_view = m_camera.getViewMatrix();
     m_projection = m_camera.getProjectionMatrix();
 
-    auto info = m_renderData.lights;
-    std::vector<glm::vec4> lightScreenPositions;
+    // Calculate screen-space light positions from view-projection matrix
+    std::vector<glm::vec4> light_positions;
+    for (const auto& light : m_renderData.lights) {
 
-    // Calculate screen space positions for all lights
-    for (int i = 0; i < info.size(); i++) {
-
-        const SceneLightData& light = m_renderData.lights[i];
         glm::vec3 lightWorldPosition;
 
         if (light.type == LightType::LIGHT_DIRECTIONAL) {
-
+            // Use fixed world position for directional light (same as in renderOcclusion)
             glm::vec3 lightDir = glm::normalize(glm::vec3(light.dir));
-            glm::vec3 camPos = m_camera.getInverseViewMatrix()[3];
-            lightWorldPosition = camPos - lightDir * 1000.0f;
-
+            lightWorldPosition = lightDir * 100.0f;
         } else if (light.type == LightType::LIGHT_POINT) {
-
             lightWorldPosition = glm::vec3(light.pos);
-
         } else {
-
             lightWorldPosition = glm::vec3(light.pos);
-
         }
 
-        glm::vec4 lightPosClip = m_projection * m_view * glm::vec4(lightWorldPosition, 1.0f);
-        glm::vec3 lightPosNDC = glm::vec3(lightPosClip) / lightPosClip.w;
-        glm::vec2 lightPosScreen = (glm::vec2(lightPosNDC.x, lightPosNDC.y) + 1.0f) * 0.5f;
-
-        lightScreenPositions.push_back(glm::vec4(lightPosScreen, 0.0f, 1.0f));
-
+        // Transform exactly like reference: view_projection * light_position
+        const glm::vec4 clip_light_position = m_projection * m_view * glm::vec4(lightWorldPosition, 1.0f);
+        const glm::vec4 ndc_light_position = clip_light_position / clip_light_position.w;
+        const glm::vec4 screen_space_light_position = (ndc_light_position + 1.0f) * 0.5f;
+        light_positions.emplace_back(screen_space_light_position);
     }
 
-    if (lightScreenPositions.empty()) {
-        glUseProgram(0);
-        glEnable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        return;
-    }
-
-    // Set shader uniforms for blur parameters struct
+    // Set blur parameters
     glUniform1i(glGetUniformLocation(m_godrays_shader, "blurParams.sampleCount"),
                 m_godrays_samples);
     glUniform1f(glGetUniformLocation(m_godrays_shader, "blurParams.blurDensity"),
@@ -649,17 +808,20 @@ void Realtime::blendCrepuscular() {
     glUniform1f(glGetUniformLocation(m_godrays_shader, "blurParams.blurExposure"),
                 m_godrays_exposure);
 
-    if (glGetError() != GL_NO_ERROR) std::cout << "Crep0" << std::endl;
-
     // Set light positions array
-    glUniform4fv(glGetUniformLocation(m_godrays_shader, "lightPositionsScreen"),
-                 lightScreenPositions.size(), glm::value_ptr(lightScreenPositions[0]));
+    if (!light_positions.empty()) {
+        glUniform4fv(glGetUniformLocation(m_godrays_shader, "lightPositionsScreen"),
+                     light_positions.size(), glm::value_ptr(light_positions[0]));
+    }
     glUniform1i(glGetUniformLocation(m_godrays_shader, "lightCount"),
-                (int)lightScreenPositions.size());
+                (int)light_positions.size());
 
-    // Set other uniforms
-    glUniform1i(glGetUniformLocation(m_godrays_shader, "enableBlur"), 1);
-    glUniform1f(glGetUniformLocation(m_godrays_shader, "blendAlpha"), 0.3f);
+    // Draw fullscreen quad
+    glBindVertexArray(m_fullscreen_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glUseProgram(0);
 
 }
 

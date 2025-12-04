@@ -13,53 +13,52 @@ struct BlurParameters {
     float sampleWeight;
 };
 
-uniform bool enableBlur = true;
 uniform BlurParameters blurParams;
 uniform vec4 lightPositionsScreen[8];
 uniform int lightCount;
-uniform float blendAlpha = 0.3;
 
-// Forward declarations
 vec3 sampleRadialBlur(BlurParameters params, vec2 lightScreenPos);
 vec3 accumulateBlur(BlurParameters params);
 
-void main() {
+void main()
+{
     fragColor = vec4(0.0);
-    if (enableBlur) {
-        vec3 blurResult = accumulateBlur(blurParams);
-        fragColor = vec4(blurResult, 1.0);
-    } else {
+    if (lightCount > 0)
+    {
+        fragColor = vec4(accumulateBlur(blurParams), 1.0);
+    }
+    else
+    {
         fragColor = texture(occlusionTexture, fragTexCoord);
     }
-
-    fragColor = vec4(1.0, 0.0, 1.0, 1.0);
 }
 
-vec3 sampleRadialBlur(BlurParameters params, vec2 lightScreenPos) {
-    vec2 rayDirection = (fragTexCoord - lightScreenPos) * params.blurDensity * (1.0 / float(params.sampleCount));
-    
-    vec2 sampleCoord = fragTexCoord;
-    vec3 accumulatedColor = texture(occlusionTexture, sampleCoord).rgb;
-    float decayValue = 1.0;
-    
-    for (int i = 0; i < params.sampleCount; ++i) {
-        sampleCoord -= rayDirection;
-        vec3 sampleValue = texture(occlusionTexture, sampleCoord).rgb;
-        sampleValue *= decayValue * params.sampleWeight;
-        accumulatedColor += sampleValue;
-        decayValue *= params.decayFactor;
+vec3 sampleRadialBlur(BlurParameters params, vec2 lightScreenPos)
+{
+    vec2 delta_tex_coord = (fragTexCoord - lightScreenPos) * params.blurDensity * (1.0 / float(params.sampleCount));
+    vec2 tex_coordinates = fragTexCoord;
+    vec3 color = texture(occlusionTexture, tex_coordinates).rgb;
+    float decay = 1.0;
+
+    for (int i = 0; i < params.sampleCount; ++i)
+    {
+        tex_coordinates -= delta_tex_coord;
+        vec3 current_sample = texture(occlusionTexture, tex_coordinates).rgb;
+        current_sample *= decay * params.sampleWeight;
+        color += current_sample;
+        decay *= params.decayFactor;
     }
 
-    return accumulatedColor * params.blurExposure;
+    return color * params.blurExposure;
 }
 
-vec3 accumulateBlur(BlurParameters params) {
-    vec3 totalBlur = vec3(0.0);
-    
-    for (int i = 0; i < lightCount; ++i) {
-        totalBlur += sampleRadialBlur(params, lightPositionsScreen[i].xy);
+vec3 accumulateBlur(BlurParameters params)
+{
+    vec3 multiple_sources_color = vec3(0.0);
+    for (int i = 0; i < lightCount; ++i)
+    {
+        multiple_sources_color += sampleRadialBlur(params, lightPositionsScreen[i].xy);
     }
 
-    return totalBlur;
+    return multiple_sources_color;
 }
-

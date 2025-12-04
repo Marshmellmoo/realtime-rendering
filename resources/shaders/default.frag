@@ -144,6 +144,6 @@ void main() {
 
     }
 
-    color = illumination;
+    color = vec4(illumination.rgb, 1.0);
 
 }
