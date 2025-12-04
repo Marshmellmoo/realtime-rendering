@@ -119,9 +119,9 @@ void Realtime::initializeGL() {
         ":/resources/shaders/godrays.vert",
         ":/resources/shaders/godrays.frag");
 
-    // m_fog_shader = ShaderLoader::createShaderProgram(
-    //     ":resources/shaders/depth_fog.vert",
-    //     ":resources/shaders/depth_fog.frag");
+    m_fog_shader = ShaderLoader::createShaderProgram(
+        ":/resources/shaders/depth_fog.vert",
+        ":/resources/shaders/depth_fog.frag");
 
     initializeFBO();
     initializeOcclusionFBO();
@@ -139,9 +139,9 @@ void Realtime::initializeGL() {
     m_godrays_decay = 1.0f;     // Decay factor between samples (matches reference)
     m_godrays_exposure = 1.0f;  // Exposure for visibility (matches reference)
 
-    m_fog_maxdist = 1.0;
-    m_fog_mindist = 0.5;
-    m_fog_rgb = glm::vec3(0.5, 0.5, 0.5);
+    m_fog_maxdist = 100.0f;  // Far distance for linear fog
+    m_fog_mindist = 1.0f;    // Near distance for linear fog
+    m_fog_rgb = glm::vec3(0.05f, 0.0f, 0.1f);  // Match scene background
     m_enable_depth_fog = true;
 
 }
@@ -454,9 +454,8 @@ void Realtime::paintGL() {
     }
 
     // =============================================
-    // PASS 2: Main Scene Render
+    // PASS 2: Main Scene Render (to default FBO)
     // =============================================
-    // Render normally to default FBO
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     glViewport(0, 0, width, height);
     glClearColor(0.05f, 0.0f, 0.1f, 1.0f);
@@ -491,20 +490,27 @@ void Realtime::paintGL() {
         drawShape(shape, m_phong_shader);
     }
 
+    glUseProgram(0);
+
     // =============================================
-    // PASS 3: Post-Processing God Rays
+    // PASS 3: God Rays Post-Processing (optional)
     // =============================================
-    // Apply godrays WITHOUT clearing framebuffer (blend onto rendered scene)
     if (m_enable_godrays) {
-        glDisable(GL_DEPTH_TEST);  // Disable depth test for post-process
+        glDisable(GL_DEPTH_TEST);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         glEnable(GL_BLEND);
         blendCrepuscular();
         glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);  // Re-enable for consistency
     }
 
-    glUseProgram(0);
+    // =============================================
+    // PASS 4: Fog Post-Processing (optional)
+    // =============================================
+    if (m_enable_depth_fog) {
+        blendDepthFog();
+    }
+
+    glEnable(GL_DEPTH_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -645,7 +651,7 @@ void Realtime::renderOcclusion() {
         glBindVertexArray(0);
     }
     
-    std::cout << "[OCCLUSION] Drew " << shapeCount << " shapes" << std::endl;
+    // Occlusion: shapes drawn (debug print removed)
 
     // Render light sources as white
     glUniform4f(colorLoc, 1.0f, 1.0f, 1.0f, 1.0f);
@@ -688,19 +694,9 @@ void Realtime::renderOcclusion() {
     }
     // restore depth testing for subsequent passes
     glEnable(GL_DEPTH_TEST);
-    std::cout << "[OCCLUSION] Drew " << lightCount << " lights" << std::endl;
 
     glUseProgram(0);
     
-    // DEBUG: Read a pixel to verify occlusion FBO has content
-    // Note: viewport is half-res, so read from center of that half-res texture
-    {
-        int occlusionWidth = width;  // already set to size().width() / 2
-        int occlusionHeight = height; // already set to size().height() / 2
-        unsigned char pixel[3] = {0, 0, 0};
-        glReadPixels(occlusionWidth/2, occlusionHeight/2, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, pixel);
-        std::cout << "[OCCLUSION] Center pixel: R=" << (int)pixel[0] << " G=" << (int)pixel[1] << " B=" << (int)pixel[2] << std::endl;
-    }
     
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     
@@ -795,6 +791,10 @@ void Realtime::blendCrepuscular() {
         const glm::vec4 screen_space_light_position = (ndc_light_position + 1.0f) * 0.5f;
         light_positions.emplace_back(screen_space_light_position);
     }
+
+    // DEBUG: full diagnostics for occlusion/post-process mismatch (disabled)
+    bool debugAll = false;
+    // Detailed diagnostics removed. Enable targeted instrumentation temporarily when needed.
 
     // Set blur parameters
     glUniform1i(glGetUniformLocation(m_godrays_shader, "blurParams.sampleCount"),
