@@ -79,6 +79,10 @@ qt6_add_resources(${PROJECT_NAME} "Resources"
         resources/shaders/godrays.vert
         resources/shaders/copy.frag
         resources/shaders/copy.vert
+        resources/shaders/postprocess/postprocess.vert
+        resources/shaders/postprocess/grayscale.frag
+        resources/shaders/postprocess/blur.frag
+        resources/shaders/postprocess/vignette.frag
 )
 
 # GLEW: this provides support for Windows (including 64-bit)
