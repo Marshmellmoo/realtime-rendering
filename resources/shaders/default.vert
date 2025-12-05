@@ -26,7 +26,7 @@ out vec4 materialSpecular;
 out float materialShininess;
 
 void main() {
-    // Reconstruct model matrix from instanced attributes
+    
     mat4 model = mat4(instanceModel0, instanceModel1, instanceModel2, instanceModel3);
     mat4 invModel = transpose(inverse(model));
 
@@ -35,7 +35,6 @@ void main() {
 
     worldSpaceNormal = vec3(invModel * vec4(normal, 0.0));
 
-    // Pass material properties to fragment shader
     materialAmbient = instanceAmbient;
     materialDiffuse = instanceDiffuse;
     materialSpecular = instanceSpecular;

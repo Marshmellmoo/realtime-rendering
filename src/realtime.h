@@ -57,26 +57,11 @@ private:
     void mouseMoveEvent(QMouseEvent *event) override;
     void timerEvent(QTimerEvent *event) override;
 
+    // =============================
+    // OpenGL Resources
+    // =============================
+    
     GLuint m_defaultFBO;
-
-    // === Scene Data ===
-    RenderData m_renderData;
-    SceneGlobalData m_global;
-
-    void render();
-    void copy(GLuint text);
-
-    void renderOcclusion();
-    void blendCrepuscular();
-    void blendDepthFog();
-
-    void activateTextures(GLuint shader);
-
-    // === Camera ===
-    Camera m_camera;
-    glm::mat4 m_view;
-    glm::mat4 m_projection;
-
 
     // === Shaders ===
     GLuint m_phong_shader;
@@ -84,59 +69,79 @@ private:
     GLuint m_occlusion_shader;
     GLuint m_godrays_shader;
     GLuint m_fog_shader;
+    GLuint m_grayscale_shader;
+    GLuint m_blur_shader;
+    GLuint m_vignette_shader;
 
+    // === Framebuffers & Textures ===
+    
     // Scene FBO
+    GLuint m_scene_fbo;
     GLuint m_scene_color;
     GLuint m_scene_depth;
-    GLuint m_scene_fbo;
 
-    // Fog FBO
-    GLuint m_fog_fbo;
-    GLuint m_fog_color;
-    GLuint m_fog_depth;
-
-    // Occlusion FBO
+    // Occlusion FBO (for god rays)
     GLuint m_occlusion_fbo;
     GLuint m_occlusion_texture;
     GLuint m_occlusion_depth;
+
+    // Fog FBO (reused for temp buffer)
+    GLuint m_fog_fbo;
+    GLuint m_fog_color;
+    GLuint m_fog_depth;
 
     // Fullscreen Quad
     GLuint m_fullscreen_vao;
     GLuint m_fullscreen_vbo;
 
+    // =============================
+    // Initialization Functions
+    // =============================
+    
     void initializeFBO();
     void initializeOcclusionFBO();
     void initializeDepthFogFBO();
     void initializeFullscreenQuad();
-
-    // ==========
-    // Parameters
-    // ==========
-
-    // Godrays
-    bool m_enable_godrays;
-    int m_godrays_samples;
-
-    float m_godrays_density;
-    float m_godrays_weight;
-    float m_godrays_decay;
-    float m_godrays_exposure;
-
-    // Depth Fog
-    bool m_enable_depth_fog;
-
-    glm::vec3 m_fog_rgb;
-    bool m_fog_relationship; // True = Linear, False = Exponential
-    float m_fog_maxdist;
-    float m_fog_mindist;
-    float m_fog_density;  // For exponential fog
-
-
+    void initializeShapeGeometry();
     void initializeDepthBuffer();
+
+    // =============================
+    // Rendering Functions
+    // =============================
+    
+    void render();
+    void renderOcclusion();
+    void renderShapesInstanced();
+    void renderShapesNonInstanced();  // For performance comparison
+    
+    // Post-Processing
+    void copy(GLuint texture);
+    void blendDepthFog();
+    void blendCrepuscular();
+    void applyGrayscale(GLuint inputTexture);
+    void applyBlur(GLuint inputTexture);
+    void applyVignette(GLuint inputTexture);
+    
+    // Other
+    void activateTextures(GLuint shader);
+    void passLightsToShader(GLuint shader);
+    void drawShape(const RenderShapeData& shape, GLuint shader);
     void passToDepthBuffer();
     void deleteFBOTextures();
 
-    // === Shape Information ===
+    // =============================
+    // Scene Data
+    // =============================
+    
+    RenderData m_renderData;
+    SceneGlobalData m_global;
+
+    // === Camera ===
+    Camera m_camera;
+    glm::mat4 m_view;
+    glm::mat4 m_projection;
+
+    // === Shape Geometry ===
     bool geometryInit = false;
     int currParam1 = 1;
     bool currParam2 = 1;
@@ -146,10 +151,38 @@ private:
     ShapeGeometry m_cylinderGeometry;
     ShapeGeometry m_coneGeometry;
 
-    void initializeShapeGeometry();
-    void passLightsToShader(GLuint shader);
-    void drawShape(const RenderShapeData& shape, GLuint shader);
-    void renderShapesInstanced();
+    // =============================
+    // Effect Parameters
+    // =============================
+
+    // God Rays
+    bool m_enable_godrays;
+    int m_godrays_samples;
+    float m_godrays_density;
+    float m_godrays_weight;
+    float m_godrays_decay;
+    float m_godrays_exposure;
+
+    // Depth Fog
+    bool m_enable_depth_fog;
+    glm::vec3 m_fog_rgb;
+    bool m_fog_relationship;        // True = Linear, False = Exponential
+    float m_fog_maxdist;
+    float m_fog_mindist;
+    float m_fog_density;
+
+    // Post-Process Effects
+    bool m_grayscale_enabled;
+
+    bool m_blur_enabled;
+    float m_blur_radius;
+
+    bool m_vignette_enabled;
+    float m_vignette_strength;
+    float m_vignette_extent;
+
+    // Rendering Mode
+    bool m_use_instanced_rendering;  // Toggle between instanced and non-instanced rendering
 
     // Tick Related Variables
     int m_timer;                                        // Stores timer which attempts to run ~60 times per second
