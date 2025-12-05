@@ -86,6 +86,14 @@ glm::mat4 Camera::getProjectionMatrix() const {
 
 }
 
+float Camera::getNearPlane() {
+    return m_nearPlane;
+}
+
+float Camera::getFarPlane() {
+    return m_farPlane;
+}
+
 void Camera::updateViewMatrix() const {
 
     glm::vec3 w = -glm::normalize(m_look);

@@ -2,15 +2,14 @@
 
 in vec3 worldSpacePosition;
 in vec3 worldSpaceNormal;
+in vec4 materialAmbient;
+in vec4 materialDiffuse;
+in vec4 materialSpecular;
+in float materialShininess;
 
 uniform float ka;
 uniform float kd;
 uniform float ks;
-
-uniform vec4 c_ambient;
-uniform vec4 c_diffuse;
-uniform vec4 c_specular;
-uniform float shininess;
 
 uniform vec3 cameraPosition;
 
@@ -41,13 +40,13 @@ vec4 calculateDirectionalLighting(Light light, vec3 normal, vec3 cameraDirection
 
     // Diffuse Calculations --
     float diffuseIntensity = max(dot(normal, lightDirection), 0.0);
-    vec4 diffuse = kd * c_diffuse * diffuseIntensity;
+    vec4 diffuse = kd * materialDiffuse * diffuseIntensity;
 
     // Specular Calculations --
     vec3 reflectDirection = reflect(-lightDirection, normal);
 
-    float specularIntensity = (shininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), shininess);
-    vec4 specular = ks * c_specular * specularIntensity;
+    float specularIntensity = (materialShininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), materialShininess);
+    vec4 specular = ks * materialSpecular * specularIntensity;
 
     return light.color * (diffuse + specular);
 }
@@ -66,12 +65,12 @@ vec4 calculatePointLighting(Light light, vec3 normal, vec3 cameraDirection) {
 
     // Diffuse Calculations --
     float diffuseIntensity = max(dot(normal, lightDirection), 0.0);
-    vec4 diffuse = kd * c_diffuse * diffuseIntensity;
+    vec4 diffuse = kd * materialDiffuse * diffuseIntensity;
 
     // Specular Calculations --
     vec3 reflectDirection = reflect(-lightDirection, normal);
-    float specularIntensity = (shininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), shininess);
-    vec4 specular = ks * c_specular * specularIntensity;
+    float specularIntensity = (materialShininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), materialShininess);
+    vec4 specular = ks * materialSpecular * specularIntensity;
 
     return (light.color * attenuation) * (diffuse + specular);
 
@@ -116,12 +115,12 @@ vec4 calculateSpotLighting(Light light, vec3 normal, vec3 cameraDirection) {
 
     // Diffuse Calculations --
     float diffuseIntensity = max(dot(normal, lightDirection), 0.0);
-    vec4 diffuse = kd * c_diffuse * diffuseIntensity;
+    vec4 diffuse = kd * materialDiffuse * diffuseIntensity;
 
     // Specular Calculations --
     vec3 reflectDirection = reflect(-lightDirection, normal);
-    float specularIntensity = (shininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), shininess);
-    vec4 specular = ks * c_specular * specularIntensity;
+    float specularIntensity = (materialShininess == 0) ? 1 : pow(max(dot(cameraDirection, reflectDirection), 0.0), materialShininess);
+    vec4 specular = ks * materialSpecular * specularIntensity;
 
     return (attenuation * light.color * falloff) * (diffuse + specular);
 
@@ -134,7 +133,7 @@ void main() {
 
     vec4 illumination = vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-    illumination += ka * c_ambient;
+    illumination += ka * materialAmbient;
 
     for (int i = 0; i < lightCount; i++) {
 
