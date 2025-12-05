@@ -25,6 +25,10 @@ struct ShapeGeometry {
     GLuint vao;
     int verticies;
 
+    // Instancing
+    GLuint instanceVBO;
+    GLuint materialVBO;
+
 };
 
 
@@ -60,7 +64,7 @@ private:
     SceneGlobalData m_global;
 
     void render();
-    void copy();
+    void copy(GLuint text);
 
     void renderOcclusion();
     void blendCrepuscular();
@@ -125,6 +129,7 @@ private:
     bool m_fog_relationship; // True = Linear, False = Exponential
     float m_fog_maxdist;
     float m_fog_mindist;
+    float m_fog_density;  // For exponential fog
 
 
     void initializeDepthBuffer();
@@ -144,6 +149,7 @@ private:
     void initializeShapeGeometry();
     void passLightsToShader(GLuint shader);
     void drawShape(const RenderShapeData& shape, GLuint shader);
+    void renderShapesInstanced();
 
     // Tick Related Variables
     int m_timer;                                        // Stores timer which attempts to run ~60 times per second

@@ -17,6 +17,8 @@ public:
     void setNearPlane(float nearPlane);
     void setFarPlane(float farPlane);
 
+    float getNearPlane();
+    float getFarPlane();
 
     glm::mat4 getViewMatrix() const;
     glm::mat4 getInverseViewMatrix() const;

@@ -133,16 +133,20 @@ void Realtime::initializeGL() {
     geometryInit = true;
 
     m_enable_godrays = true;
-    m_godrays_samples = 100;    // Number of samples for radial blur
-    m_godrays_density = 1.0f;   // Ray spread density
-    m_godrays_weight = 0.01f;   // Weight per sample (matches reference)
-    m_godrays_decay = 1.0f;     // Decay factor between samples (matches reference)
-    m_godrays_exposure = 1.0f;  // Exposure for visibility (matches reference)
+    m_enable_depth_fog = false;
 
-    m_fog_maxdist = 100.0f;  // Far distance for linear fog
-    m_fog_mindist = 1.0f;    // Near distance for linear fog
-    m_fog_rgb = glm::vec3(0.05f, 0.0f, 0.1f);  // Match scene background
-    m_enable_depth_fog = true;
+    m_godrays_samples = 100;
+    m_godrays_density = 1.0f;
+    m_godrays_weight = 0.01f;
+    m_godrays_decay = 1.0f;
+    m_godrays_exposure = 1.0f;
+
+    // Depth Fog Parameter Init --
+    m_fog_maxdist = 60.0f;
+    m_fog_mindist = 10.0f;
+    m_fog_density = 0.2f;
+    m_fog_relationship = false; // true - linear, false - exponential
+    m_fog_rgb = glm::vec3(0.05f, 0.05f, 0.1f);
 
 }
 
@@ -167,7 +171,7 @@ void Realtime::initializeFBO() {
 
     glGenTextures(1, &m_scene_depth);
     glBindTexture(GL_TEXTURE_2D, m_scene_depth);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height,
                  0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -177,8 +181,15 @@ void Realtime::initializeFBO() {
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, m_scene_color, 0);
-    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_scene_depth, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 
+                           GL_TEXTURE_2D, m_scene_depth, 0);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    // Validate FBO
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "Scene FBO incomplete: " << status << std::endl;
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
 
@@ -194,7 +205,6 @@ void Realtime::initializeDepthFogFBO() {
     glGenFramebuffers(1, &m_fog_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fog_fbo);
 
-    // Create color texture FIRST
     glGenTextures(1, &m_fog_color);
     glBindTexture(GL_TEXTURE_2D, m_fog_color);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
@@ -204,7 +214,6 @@ void Realtime::initializeDepthFogFBO() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    // Create depth texture SECOND
     glGenTextures(1, &m_fog_depth);
     glBindTexture(GL_TEXTURE_2D, m_fog_depth);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, width, height,
@@ -214,7 +223,6 @@ void Realtime::initializeDepthFogFBO() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    // NOW attach them
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, m_fog_color, 0);
 
@@ -226,7 +234,7 @@ void Realtime::initializeDepthFogFBO() {
 }
 
 void Realtime::initializeOcclusionFBO() {
-    // Use a lower-resolution occlusion map (half resolution) for better performance
+    
     int width = (size().width() * m_devicePixelRatio) / 2;
     int height = (size().height() * m_devicePixelRatio) / 2;
 
@@ -256,13 +264,6 @@ void Realtime::initializeOcclusionFBO() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                               GL_RENDERBUFFER, m_occlusion_depth);
 
-    // Ensure framebuffer is complete in debug builds (optional)
-#ifndef NDEBUG
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (status != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "Occlusion FBO incomplete: " << status << std::endl;
-    }
-#endif
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
 
@@ -304,7 +305,6 @@ glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
                       (void *)(2 * sizeof(GLfloat)));
 
 glBindVertexArray(0);
-bool debugShowOcclusion = false; // disabled by default to allow normal compositing
 
 }
 
@@ -338,6 +338,10 @@ void Realtime::initializeShapeGeometry() {
                           6 * sizeof(GLfloat),
                           (void*)(3 * sizeof(GLfloat)));
 
+    // Setup instance buffers (will be filled during rendering)
+    glGenBuffers(1, &m_sphereGeometry.instanceVBO);
+    glGenBuffers(1, &m_sphereGeometry.materialVBO);
+
     m_sphereGeometry.verticies = sphere.size() / 6;
 
     glBindVertexArray(0);
@@ -368,6 +372,10 @@ void Realtime::initializeShapeGeometry() {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
                           6 * sizeof(GLfloat),
                           (void*)(3 * sizeof(GLfloat)));
+
+    // Setup instance buffers
+    glGenBuffers(1, &m_cubeGeometry.instanceVBO);
+    glGenBuffers(1, &m_cubeGeometry.materialVBO);
 
     // Vertex Count
     m_cubeGeometry.verticies = cube.size() / 6;
@@ -401,6 +409,10 @@ void Realtime::initializeShapeGeometry() {
                           6 * sizeof(GLfloat),
                           (void*)(3 * sizeof(GLfloat)));
 
+    // Setup instance buffers
+    glGenBuffers(1, &m_cylinderGeometry.instanceVBO);
+    glGenBuffers(1, &m_cylinderGeometry.materialVBO);
+
     // Vertex Count
     m_cylinderGeometry.verticies = cylinder.size() / 6;
 
@@ -433,6 +445,10 @@ void Realtime::initializeShapeGeometry() {
                           6 * sizeof(float),
                           (void*)(3 * sizeof(float)));
 
+    // Setup instance buffers
+    glGenBuffers(1, &m_coneGeometry.instanceVBO);
+    glGenBuffers(1, &m_coneGeometry.materialVBO);
+
     m_coneGeometry.verticies = cone.size() / 6;
 
     glBindVertexArray(0);
@@ -448,20 +464,66 @@ void Realtime::paintGL() {
     // =============================================
     // PASS 1: Occlusion Pre-Pass
     // =============================================
-    // Render geometry black, lights white to half-res occlusion FBO
-    if (m_enable_godrays) {
-        renderOcclusion();
+
+    if (m_enable_godrays) renderOcclusion();
+
+    // =============================================
+    // PASS 2: Main Scene Render
+    // =============================================
+
+    render();
+
+    // =============================================
+    // PASS 3: Copy or Fog Blend to Default FBO
+    // =============================================
+    if (m_enable_depth_fog) {
+    
+        blendDepthFog();
+
+    } else {
+        
+        copy(m_scene_color);
+
     }
 
     // =============================================
-    // PASS 2: Main Scene Render (to default FBO)
+    // PASS 4: God Rays Post-Processing
     // =============================================
+    
+    if (m_enable_godrays) {
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+        glDisable(GL_DEPTH_TEST);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glEnable(GL_BLEND);
+
+        blendCrepuscular();
+
+        glDisable(GL_BLEND);
+
+    }
+
+    // rendering the light despite the depth of the color from the scene
+
+    glEnable(GL_DEPTH_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+}
+
+void Realtime::render() {
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo);
+
+    int width = size().width() * m_devicePixelRatio;
+    int height = size().height() * m_devicePixelRatio;
+
     glViewport(0, 0, width, height);
+
     glClearColor(0.05f, 0.0f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Ensure blending is disabled for opaque geometry rendering
     glDisable(GL_BLEND);
     glUseProgram(m_phong_shader);
 
@@ -486,85 +548,14 @@ void Realtime::paintGL() {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
 
-    for (const auto& shape : m_renderData.shapes) {
-        drawShape(shape, m_phong_shader);
-    }
+    renderShapesInstanced();
 
     glUseProgram(0);
 
-    // =============================================
-    // PASS 3: God Rays Post-Processing (optional)
-    // =============================================
-    if (m_enable_godrays) {
-        glDisable(GL_DEPTH_TEST);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glEnable(GL_BLEND);
-        blendCrepuscular();
-        glDisable(GL_BLEND);
-    }
-
-    // =============================================
-    // PASS 4: Fog Post-Processing (optional)
-    // =============================================
-    if (m_enable_depth_fog) {
-        blendDepthFog();
-    }
-
-    glEnable(GL_DEPTH_TEST);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
-    glBindVertexArray(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
 }
 
-void Realtime::render() {
-
-    glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo);
-
-    int width = size().width() * m_devicePixelRatio;
-    int height = size().height() * m_devicePixelRatio;
-
-    glViewport(0, 0, width, height);
-
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUseProgram(m_phong_shader);
-
-    m_view = m_camera.getViewMatrix();
-    m_projection = m_camera.getProjectionMatrix();
-
-    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "view"),
-                       1, GL_FALSE, &m_view[0][0]);
-    glUniformMatrix4fv(glGetUniformLocation(m_phong_shader, "proj"),
-                       1, GL_FALSE, &m_projection[0][0]);
-
-    glm::vec3 camPosition = m_camera.getInverseViewMatrix()[3];
-    glUniform3fv(glGetUniformLocation(m_phong_shader, "cameraPosition"),
-                 1, &camPosition[0]);
-
-    glUniform1f(glGetUniformLocation(m_phong_shader, "ka"),
-                m_global.ka);
-    glUniform1f(glGetUniformLocation(m_phong_shader, "kd"),
-                m_global.kd);
-    glUniform1f(glGetUniformLocation(m_phong_shader, "ks"),
-                m_global.ks);
-
-    passLightsToShader(m_phong_shader);
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-
-    for (const auto& shape : m_renderData.shapes) {
-        drawShape(shape, m_phong_shader);
-    }
-
-    glUseProgram(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
-
-}
-
-void Realtime::copy() {
+// Copies scene as texture to render to screen.
+void Realtime::copy(GLuint text) {
 
     int width  = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
@@ -576,7 +567,7 @@ void Realtime::copy() {
     glUseProgram(m_copy_shader);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_scene_color);
+    glBindTexture(GL_TEXTURE_2D, text);
     glUniform1i(glGetUniformLocation(m_copy_shader, "sceneTexture"), 0);
 
     glBindVertexArray(m_fullscreen_vao);
@@ -589,6 +580,8 @@ void Realtime::copy() {
 
 }
 
+// Renders all objects as black, and all light sources as white through
+// the m_occlusion_shader. Saves to m_occlusion_fbo to later blend with crepuscular rays.
 void Realtime::renderOcclusion() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_occlusion_fbo);
@@ -610,13 +603,11 @@ void Realtime::renderOcclusion() {
     glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "proj"),
                        1, GL_FALSE, &m_projection[0][0]);
 
-    // Render all geometry as black
+    // // Render all geometry as black .
     GLint colorLoc = glGetUniformLocation(m_occlusion_shader, "occlusionColor");
     glUniform4f(colorLoc, 0.0f, 0.0f, 0.0f, 1.0f);
 
-    int shapeCount = 0;
     for (const auto& shape : m_renderData.shapes) {
-        shapeCount++;
         glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "model"),
                            1, GL_FALSE, &shape.ctm[0][0]);
         
@@ -650,57 +641,48 @@ void Realtime::renderOcclusion() {
         glDrawArrays(GL_TRIANGLES, 0, verticies);
         glBindVertexArray(0);
     }
-    
-    // Occlusion: shapes drawn (debug print removed)
 
-    // Render light sources as white
     glUniform4f(colorLoc, 1.0f, 1.0f, 1.0f, 1.0f);
 
-    int lightCount = 0;
-
-    // Render light geometry into the occlusion map **without depth testing** so
-    // the occlusion texture contains a white marker at the light's screen
-    // position even if the light model is behind other geometry. This makes
-    // the radial blur originate from the correct screen location and allows
-    // rays to "peak through" occluders.
-    glDisable(GL_DEPTH_TEST);
     for (const auto& light : m_renderData.lights) {
-        lightCount++;
+        
         glm::mat4 lightModel = glm::mat4(1.0f);
 
         if (light.type == LightType::LIGHT_DIRECTIONAL) {
+            
             glm::vec3 lightDir = glm::normalize(glm::vec3(light.dir));
-            // Place the light sphere 100 units along the direction vector
-            glm::vec3 lightWorldPos = lightDir * 100.0f;
+            // Place the light sphere opposite to light direction (where the sun would be)
+            glm::vec3 lightWorldPos = -lightDir * 100.0f;
             lightModel = glm::translate(lightModel, lightWorldPos);
-            lightModel = glm::scale(lightModel, glm::vec3(15.0f));
+            lightModel = glm::scale(lightModel, glm::vec3(100.0f));
         } else if (light.type == LightType::LIGHT_POINT) {
-            // Point lights: render at actual position with smaller radius
+            
             lightModel = glm::translate(lightModel, glm::vec3(light.pos));
             lightModel = glm::scale(lightModel, glm::vec3(0.5f));
+
         } else {
-            // Spot lights: render at actual position
+            
+            
             lightModel = glm::translate(lightModel, glm::vec3(light.pos));
             lightModel = glm::scale(lightModel, glm::vec3(0.3f));
+
         }
 
         glUniformMatrix4fv(glGetUniformLocation(m_occlusion_shader, "model"),
                            1, GL_FALSE, &lightModel[0][0]);
 
-        // Render light as a sphere (no depth test)
+        // Renders light as a sphere.
         glBindVertexArray(m_sphereGeometry.vao);
         glDrawArrays(GL_TRIANGLES, 0, m_sphereGeometry.verticies);
         glBindVertexArray(0);
-    }
-    // restore depth testing for subsequent passes
-    glEnable(GL_DEPTH_TEST);
 
+    }
+    
+    glEnable(GL_DEPTH_TEST);
     glUseProgram(0);
-    
-    
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
     
-    // Reset viewport to main window
+    // Resetting the viewport for future passes.
     int mainWidth = size().width() * m_devicePixelRatio;
     int mainHeight = size().height() * m_devicePixelRatio;
     glViewport(0, 0, mainWidth, mainHeight);
@@ -709,11 +691,14 @@ void Realtime::renderOcclusion() {
 
 void Realtime::blendDepthFog() {
 
+    // Render fog-blended scene using m_scene_fbo depth texture !
     int width = size().width() * m_devicePixelRatio;
     int height = size().height() * m_devicePixelRatio;
-    glViewport(0, 0, width, height);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_defaultFBO);
+    glViewport(0, 0, width, height);
+    glDisable(GL_DEPTH_TEST);
+
     glUseProgram(m_fog_shader);
 
     glActiveTexture(GL_TEXTURE0);
@@ -727,13 +712,19 @@ void Realtime::blendDepthFog() {
     glUniform1f(glGetUniformLocation(m_fog_shader, "minDist"), m_fog_mindist);
     glUniform1f(glGetUniformLocation(m_fog_shader, "maxDist"), m_fog_maxdist);
     glUniform3fv(glGetUniformLocation(m_fog_shader, "fogColour"), 1, &m_fog_rgb[0]);
+    
+    glUniform1f(glGetUniformLocation(m_fog_shader, "nearPlane"), m_camera.getNearPlane());
+    glUniform1f(glGetUniformLocation(m_fog_shader, "farPlane"), m_camera.getFarPlane());
+    
+    glUniform1i(glGetUniformLocation(m_fog_shader, "useLinear"), m_fog_relationship ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_fog_shader, "fogDensity"), m_fog_density);
 
     glBindVertexArray(m_fullscreen_vao);
-    glDisable(GL_DEPTH_TEST);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
 
     glEnable(GL_DEPTH_TEST);
+    glUseProgram(0);
 
 }
 
@@ -743,25 +734,9 @@ void Realtime::blendCrepuscular() {
     int height = size().height() * m_devicePixelRatio;
     glViewport(0, 0, width, height);
 
-    // DEBUG: Display occlusion texture to verify it has content
-    bool debugOcclusion = false;  // Set to true to visualize occlusion map
-    if (debugOcclusion) {
-        glDisable(GL_BLEND);
-        glUseProgram(m_copy_shader);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
-        glUniform1i(glGetUniformLocation(m_copy_shader, "sceneTexture"), 0);
-        glBindVertexArray(m_fullscreen_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-        glUseProgram(0);
-        glEnable(GL_BLEND);
-        return;
-    }
-
     glUseProgram(m_godrays_shader);
 
-    // Bind occlusion texture to unit 0
+    // Binding godrays onto occlusion texture.
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_occlusion_texture);
     glUniform1i(glGetUniformLocation(m_godrays_shader, "occlusionTexture"), 0);
@@ -769,34 +744,37 @@ void Realtime::blendCrepuscular() {
     m_view = m_camera.getViewMatrix();
     m_projection = m_camera.getProjectionMatrix();
 
-    // Calculate screen-space light positions from view-projection matrix
+    // Rendering all lights !
     std::vector<glm::vec4> light_positions;
     for (const auto& light : m_renderData.lights) {
 
         glm::vec3 lightWorldPosition;
 
         if (light.type == LightType::LIGHT_DIRECTIONAL) {
-            // Use fixed world position for directional light (same as in renderOcclusion)
+            
             glm::vec3 lightDir = glm::normalize(glm::vec3(light.dir));
-            lightWorldPosition = lightDir * 100.0f;
+            // Place sun opposite to light direction (same as occlusion pass)
+            lightWorldPosition = -lightDir * 100.0f;
+
         } else if (light.type == LightType::LIGHT_POINT) {
+
             lightWorldPosition = glm::vec3(light.pos);
+
         } else {
+
             lightWorldPosition = glm::vec3(light.pos);
+
         }
 
-        // Transform exactly like reference: view_projection * light_position
+        // Translating light to screen space .
         const glm::vec4 clip_light_position = m_projection * m_view * glm::vec4(lightWorldPosition, 1.0f);
         const glm::vec4 ndc_light_position = clip_light_position / clip_light_position.w;
         const glm::vec4 screen_space_light_position = (ndc_light_position + 1.0f) * 0.5f;
         light_positions.emplace_back(screen_space_light_position);
+
     }
 
-    // DEBUG: full diagnostics for occlusion/post-process mismatch (disabled)
-    bool debugAll = false;
-    // Detailed diagnostics removed. Enable targeted instrumentation temporarily when needed.
-
-    // Set blur parameters
+    // Setting parameters for all crepuscular rays.
     glUniform1i(glGetUniformLocation(m_godrays_shader, "blurParams.sampleCount"),
                 m_godrays_samples);
     glUniform1f(glGetUniformLocation(m_godrays_shader, "blurParams.blurDensity"),
@@ -808,7 +786,7 @@ void Realtime::blendCrepuscular() {
     glUniform1f(glGetUniformLocation(m_godrays_shader, "blurParams.blurExposure"),
                 m_godrays_exposure);
 
-    // Set light positions array
+    // Passing all the light positions !
     if (!light_positions.empty()) {
         glUniform4fv(glGetUniformLocation(m_godrays_shader, "lightPositionsScreen"),
                      light_positions.size(), glm::value_ptr(light_positions[0]));
@@ -816,7 +794,7 @@ void Realtime::blendCrepuscular() {
     glUniform1i(glGetUniformLocation(m_godrays_shader, "lightCount"),
                 (int)light_positions.size());
 
-    // Draw fullscreen quad
+    // Drawing everything to the screen.
     glBindVertexArray(m_fullscreen_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
@@ -902,6 +880,7 @@ void Realtime::passLightsToShader(GLuint shader) {
 
 }
 
+// Old implementation for realtime project 6.
 void Realtime::drawShape(const RenderShapeData& shape, GLuint shader) {
 
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"),
@@ -970,7 +949,117 @@ void Realtime::drawShape(const RenderShapeData& shape, GLuint shader) {
     glDrawArrays(GL_TRIANGLES, 0, verticies);
     glBindVertexArray(0);
 
-    // call bindframebuffer(gl_framebuffer, 0) before final pass / blend
+}
+
+void Realtime::renderShapesInstanced() {
+
+    std::vector<const RenderShapeData*> spheres, cubes, cylinders, cones;
+    
+    for (const auto& shape : m_renderData.shapes) {
+
+        switch(shape.primitive.type) {
+            case PrimitiveType::PRIMITIVE_SPHERE:
+                spheres.push_back(&shape);
+                break;
+
+            case PrimitiveType::PRIMITIVE_CUBE:
+                cubes.push_back(&shape);
+                break;
+
+            case PrimitiveType::PRIMITIVE_CYLINDER:
+                cylinders.push_back(&shape);
+                break;
+
+            case PrimitiveType::PRIMITIVE_CONE:
+                cones.push_back(&shape);
+                break;
+
+            case PrimitiveType::PRIMITIVE_MESH:
+                break;
+
+        }
+    }
+    
+    // Rendering batches of shapes ! 
+    auto renderBatch =
+        [this](const std::vector<const RenderShapeData*>& shapes, ShapeGeometry& geometry) {
+        
+        if (shapes.empty()) return;
+        
+
+        std::vector<glm::mat4> modelMatrices;
+        std::vector<glm::vec4> ambients, diffuses, speculars;
+        std::vector<float> shininesses;
+        
+        for (const auto* shape : shapes) {
+
+            modelMatrices.push_back(shape->ctm);
+            ambients.push_back(shape->primitive.material.cAmbient);
+            diffuses.push_back(shape->primitive.material.cDiffuse);
+            speculars.push_back(shape->primitive.material.cSpecular);
+            shininesses.push_back(shape->primitive.material.shininess);
+
+        }
+        
+        glBindVertexArray(geometry.vao);
+        
+        // Upload model matrices to instance buffer
+        glBindBuffer(GL_ARRAY_BUFFER, geometry.instanceVBO);
+        glBufferData(GL_ARRAY_BUFFER, modelMatrices.size() * sizeof(glm::mat4), 
+                     modelMatrices.data(), GL_DYNAMIC_DRAW);
+        
+        
+        for (int i = 0; i < 4; i++) {
+
+            glEnableVertexAttribArray(2 + i);
+            glVertexAttribPointer(2 + i, 4, GL_FLOAT, GL_FALSE, 
+                                sizeof(glm::mat4), (void*)(sizeof(glm::vec4) * i));
+            glVertexAttribDivisor(2 + i, 1);
+
+        }
+        
+        glBindBuffer(GL_ARRAY_BUFFER, geometry.materialVBO);
+        
+        std::vector<float> materialData;
+        for (size_t i = 0; i < shapes.size(); i++) {
+            materialData.insert(materialData.end(), &ambients[i][0], &ambients[i][0] + 4);
+            materialData.insert(materialData.end(), &diffuses[i][0], &diffuses[i][0] + 4);
+            materialData.insert(materialData.end(), &speculars[i][0], &speculars[i][0] + 4);
+            materialData.push_back(shininesses[i]);
+        }
+        glBufferData(GL_ARRAY_BUFFER, materialData.size() * sizeof(float), 
+                     materialData.data(), GL_DYNAMIC_DRAW);
+        
+        
+        size_t stride = 13 * sizeof(float);
+        glEnableVertexAttribArray(6);
+        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, stride, (void*)0);
+        glVertexAttribDivisor(6, 1);
+        
+        glEnableVertexAttribArray(7);
+        glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride, (void*)(4 * sizeof(float)));
+        glVertexAttribDivisor(7, 1);
+        
+        glEnableVertexAttribArray(8);
+        glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+        glVertexAttribDivisor(8, 1);
+        
+        glEnableVertexAttribArray(9);
+        glVertexAttribPointer(9, 1, GL_FLOAT, GL_FALSE, stride, (void*)(12 * sizeof(float)));
+        glVertexAttribDivisor(9, 1);
+        
+
+        glDrawArraysInstanced(GL_TRIANGLES, 0, geometry.verticies, shapes.size());
+        
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    };
+    
+    // Rendering all shapes using their vbos, and lambda / mini function above.
+    renderBatch(spheres, m_sphereGeometry);
+    renderBatch(cubes, m_cubeGeometry);
+    renderBatch(cylinders, m_cylinderGeometry);
+    renderBatch(cones, m_coneGeometry);
 
 }
 
@@ -981,40 +1070,6 @@ void Realtime::resizeGL(int w, int h) {
     // Students: anything requiring OpenGL calls when the program starts should be done here
     float aspectRatio = (float)w / (float)h;
     m_camera.setAspectRatio(aspectRatio);
-
-    // initializeDepthBuffer();
-
-}
-
-void Realtime::deleteFBOTextures() {
-
-    // int width = size().width() * m_devicePixelRatio;
-    // int height = size().height() * m_devicePixelRatio;
-
-    // glDeleteTextures(1, &m_color);
-    // // glDeleteTextures(1, &m_depth);
-
-    // glGenTextures(1, &m_color);
-    // glBindTexture(GL_TEXTURE_2D, m_color);
-    // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-    //              GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // // glGenTextures(1, &m_depth);
-    // // glBindTexture(GL_TEXTURE_2D, m_depth);
-    // // glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
-    // //              GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    // // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    // // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-    //                        GL_TEXTURE_2D, m_color, 0);
-    // glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-    //                        GL_TEXTURE_2D, m_depth, 0);
-
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 }
 
@@ -1063,7 +1118,9 @@ void Realtime::sceneChanged() {
 
     initializeShapeGeometry();
     initializeFullscreenQuad();
+
     update(); // asks for a PaintGL() call to occur
+
 }
 
 void Realtime::settingsChanged() {
@@ -1079,7 +1136,7 @@ void Realtime::settingsChanged() {
         initializeShapeGeometry();
     }
 
-    update(); // asks for a PaintGL() call to occur
+    update();
 
 }
 
