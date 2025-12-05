@@ -10,9 +10,9 @@ For each test case, load the specified scene file, adjust parameters as indicate
 
 |                                           Test Case                                            |                                                                     Your Output                                                                     |
 | :----------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------: |
-| **Test 1: Basic God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_basic.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=100, decay=0.98, weight=0.5, density=0.6, exposure=1.0 | ![Place godrays_basic.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_basic.png) |
-| **Test 2: Strong God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_strong.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=150, decay=0.96, weight=0.8, density=0.8, exposure=1.2 | ![Place godrays_strong.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_strong.png) |
-| **Test 3: Subtle God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_subtle.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=80, decay=0.99, weight=0.3, density=0.5, exposure=0.8 | ![Place godrays_subtle.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_subtle.png) |
+| **Test 1: Basic God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_basic.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=100, decay=1.0, weight=0.01, density=1.0, exposure=1.0 | ![Place godrays_basic.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_basic.png) |
+| **Test 2: Strong God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_strong.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=150, decay=0.99, weight=0.01, density=1.5, exposure=2.0 | ![Place godrays_strong.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_strong.png) |
+| **Test 3: Subtle God Rays**<br/>Input: `chess.json`<br/>Output: `godrays_subtle.png`<br/>Parameters: (5, 5, 0.1, 100)<br/>**God Rays Settings:** Enable god rays, samples=80, decay=1.0, weight=0.01, density=0.5, exposure=0.5 | ![Place godrays_subtle.png in student_outputs/proj6 folder](student_outputs/proj6/godrays_subtle.png) |
 
 #### Fog Effect
 
@@ -38,7 +38,6 @@ Within realtime, I made a struct called ShapeGeometry that holds each shape's VA
 
 For instanced rendering, I implemented batching by shape type to reduce draw calls and improve performance for scenes with many objects.
 
-#### Extra Credit Features
 
 **God Rays (Screen-Space Volumetric Lighting):**
 - Implemented using radial blur from light position in screen space
@@ -72,6 +71,7 @@ For the extra credit features, I referenced:
 - GPU Gems 3 for god rays implementation concepts
 - OpenGL post-processing tutorials for framebuffer techniques
 - Graphics programming resources for fog and atmospheric effects
+- I used chatgpt to debug and generate effects for my post-processing implementation
 
 ### Known Bugs
 
