@@ -147,14 +147,14 @@ void Realtime::initializeGL() {
     // Godrays Parameter Init --
     m_enable_godrays = true;
 
-    m_godrays_samples = 89;
+    m_godrays_samples = 100;
     m_godrays_density = 0.5f;
     m_godrays_weight = 0.01f;
     m_godrays_decay = 1.0f;
-    m_godrays_exposure = 0.5f;
+    m_godrays_exposure = 1.0f;
 
     // Depth Fog Parameter Init --
-    m_enable_depth_fog = false;
+    m_enable_depth_fog = true;
 
     m_fog_maxdist = 60.0f;
     m_fog_mindist = 10.0f;
@@ -163,7 +163,7 @@ void Realtime::initializeGL() {
     m_fog_rgb = glm::vec3(0.2f, 0.4f, 0.8f);
 
     // Post-Process Effects Parameter Init --
-    m_grayscale_enabled = false;
+    m_grayscale_enabled = true;
 
     m_blur_enabled = false;
     m_blur_radius = 1.5f;
